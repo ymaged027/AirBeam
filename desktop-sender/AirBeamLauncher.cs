@@ -6,12 +6,12 @@ using System.Text;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("AirBeam")]
-[assembly: AssemblyDescription("AirBeam v5.1 - Ultra-Speed Wireless Transfer")]
+[assembly: AssemblyDescription("AirBeam v5.2 - Ultra-Speed Wireless Transfer")]
 [assembly: AssemblyCompany("AirBeam Wireless")]
 [assembly: AssemblyProduct("AirBeam")]
 [assembly: AssemblyCopyright("Copyright © 2026 AirBeam")]
-[assembly: AssemblyVersion("5.1.0.0")]
-[assembly: AssemblyFileVersion("5.1.0.0")]
+[assembly: AssemblyVersion("5.2.0.0")]
+[assembly: AssemblyFileVersion("5.2.0.0")]
 
 namespace AirBeamLauncher
 {
@@ -38,14 +38,7 @@ namespace AirBeamLauncher
                         foreach (string arg in args)
                         {
                             argBuilder.Append(" ");
-                            if (arg.Contains(" ") && !arg.StartsWith("\""))
-                            {
-                                argBuilder.AppendFormat("\"{0}\"", arg);
-                            }
-                            else
-                            {
-                                argBuilder.Append(arg);
-                            }
+                            argBuilder.AppendFormat("\"{0}\"", arg.Replace("\"", "\\\""));
                         }
                     }
 
@@ -74,10 +67,7 @@ namespace AirBeamLauncher
                         foreach (string arg in args)
                         {
                             if (argBuilder.Length > 0) argBuilder.Append(" ");
-                            if (arg.Contains(" ") && !arg.StartsWith("\""))
-                                argBuilder.AppendFormat("\"{0}\"", arg);
-                            else
-                                argBuilder.Append(arg);
+                            argBuilder.AppendFormat("\"{0}\"", arg.Replace("\"", "\\\""));
                         }
                     }
 

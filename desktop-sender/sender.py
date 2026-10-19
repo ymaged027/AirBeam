@@ -338,27 +338,72 @@ def is_explorer_context_menu_registered() -> bool:
         return False
 
 
+def package_folder_to_zip(folder_path: str, status_cb=None) -> Optional[str]:
+    """
+    Packages a directory into a fast, uncompressed (.zip) archive using ZIP_STORED.
+    Preserves the full folder hierarchy and relative subdirectories without compression bottleneck.
+    """
+    if not folder_path or not os.path.isdir(folder_path):
+        return None
+    try:
+        folder_path = os.path.abspath(folder_path)
+        folder_name = os.path.basename(folder_path.rstrip("\\/"))
+        if not folder_name:
+            folder_name = "archive"
+        staging_dir = os.path.join(tempfile.gettempdir(), "AirBeam_Staging")
+        os.makedirs(staging_dir, exist_ok=True)
+        zip_path = os.path.join(staging_dir, f"{folder_name}.zip")
+
+        if status_cb:
+            try:
+                status_cb(f"📦 Packaging folder '{folder_name}' into fast archive...")
+            except Exception:
+                pass
+
+        base_dir = os.path.dirname(folder_path)
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for root, _, filenames in os.walk(folder_path):
+                for fn in filenames:
+                    file_full = os.path.join(root, fn)
+                    if os.path.isfile(file_full):
+                        arcname = os.path.relpath(file_full, base_dir).replace("\\", "/")
+                        zf.write(file_full, arcname)
+        return zip_path
+    except Exception as e:
+        print(f"Error packaging folder '{folder_path}' to zip: {e}")
+        return None
+
+
 def register_explorer_context_menu() -> bool:
     """Registers 'Send with AirBeam' into HKCU Explorer context menus (zero Admin rights required)."""
     if not winreg:
         return False
     try:
+        resolved_exe = None
         if getattr(sys, "frozen", False):
-            cmd = f'"{sys.executable}" "%1"'
-            icon = sys.executable
+            resolved_exe = sys.executable
         else:
+            # Check installed/frozen mode in dist or root repo mode
+            dist_exe = os.path.join(APP_ROOT, "dist", "AirBeam", "AirBeam.exe")
             root_exe = os.path.join(APP_ROOT, "AirBeam.exe")
-            if os.path.exists(root_exe):
-                cmd = f'"{root_exe}" "%1"'
-                icon = root_exe
-            else:
-                py_dir = os.path.dirname(sys.executable)
-                pythonw = os.path.join(py_dir, "pythonw.exe")
-                py_exe = pythonw if os.path.exists(pythonw) else sys.executable
-                sender_script = os.path.abspath(__file__)
-                cmd = f'"{py_exe}" "{sender_script}" "%1"'
-                icon_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "airbeam.ico")
-                icon = icon_candidate if os.path.exists(icon_candidate) else sys.executable
+            if os.path.exists(dist_exe) and "dist" in os.path.abspath(__file__):
+                resolved_exe = dist_exe
+            elif os.path.exists(root_exe):
+                resolved_exe = root_exe
+            elif os.path.exists(dist_exe):
+                resolved_exe = dist_exe
+
+        if resolved_exe and os.path.exists(resolved_exe):
+            cmd = f'"{resolved_exe}" "%1"'
+            icon = resolved_exe
+        else:
+            py_dir = os.path.dirname(sys.executable)
+            pythonw = os.path.join(py_dir, "pythonw.exe")
+            py_exe = pythonw if os.path.exists(pythonw) else sys.executable
+            sender_script = os.path.abspath(__file__)
+            cmd = f'"{py_exe}" "{sender_script}" "%1"'
+            icon_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "airbeam.ico")
+            icon = icon_candidate if os.path.exists(icon_candidate) else sys.executable
 
         for key_path in (r"Software\Classes\*\shell\AirBeam", r"Software\Classes\Directory\shell\AirBeam"):
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as k:
@@ -603,8 +648,10 @@ IPHONE_PORTAL_PORTS = (8080, 8090)
 IPHONE_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_iPhone")
 IPHONE_CONFIG_FILE = os.path.join(APP_ROOT, "iphone_hotspot_config.json")
 PC_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_PC")
+ANDROID_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_Android")
 os.makedirs(IPHONE_RECEIVED_DIR, exist_ok=True)
 os.makedirs(PC_RECEIVED_DIR, exist_ok=True)
+os.makedirs(ANDROID_RECEIVED_DIR, exist_ok=True)
 DEFAULT_STRIPE_SIZE = 16 * 1024 * 1024  # 16 MB stripes
 CHUNK_SLICE_BYTES = 2 * 1024 * 1024     # 2 MB smooth streaming slices
 SOCKET_SNDBUF_SIZE = 8 * 1024 * 1024    # 8 MB TCP send buffer
@@ -1602,7 +1649,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.1 • Web Portal</title>
+    <title>AirBeam v5.2 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1840,8 +1887,8 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.1</h1>
-        <p>Ultra-Fast Wireless Transfer for PC, iPhone & iPad</p>
+        <h1><span>⚡</span> AirBeam v5.2</h1>
+        <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
             <span>DIRECT 5GHz WI-FI PIPE (50-95+ MB/s)</span>
@@ -1869,7 +1916,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             <span>📸 Send to PC</span>
             <span class="badge">Atomic Part Upload</span>
         </div>
-        <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">Send photos, 4K videos, or files directly to your PC's <code>Received_From_iPhone</code> folder at full Wi-Fi speed.</p>
+        <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">Send photos, 4K videos, or files directly to your PC at full Wi-Fi speed.</p>
         <input type="file" id="filePicker" multiple style="display:none;" onchange="handleFileSelect(this.files)">
         <button class="btn btn-primary" onclick="document.getElementById('filePicker').click()">📸 Select Photos, Videos & Files</button>
 
@@ -1954,8 +2001,12 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
             let html = '';
             stagedFiles.forEach(f => {
+                const thumbHtml = f.thumb_url
+                    ? `<img src="${f.thumb_url}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.15);" alt="thumb" onerror="this.style.display='none'">`
+                    : '';
                 html += `
                     <div class="file-item">
+                        ${thumbHtml}
                         <div class="file-info">
                             <div class="file-name" title="${f.name}">${f.name}</div>
                             <div class="file-size">${f.formatted_size}</div>
@@ -2043,7 +2094,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         function copyPcClipboard() {
             if (!currentPcClipboard) return;
             navigator.clipboard.writeText(currentPcClipboard).then(() => {
-                showToast("Copied to iPhone clipboard!");
+                showToast("Copied to clipboard!");
             }).catch(() => {
                 showToast("Please allow clipboard permission");
             });
@@ -2111,6 +2162,8 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 showToast("All files uploaded to PC successfully!");
                 setTimeout(() => { progressBox.style.display = 'none'; }, 2000);
                 document.getElementById('filePicker').value = '';
+            } catch (err) {
+                showToast(err.message || "Upload error");
             } finally {
                 await releaseWakeLock();
             }
@@ -2175,13 +2228,22 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                     if (xhr.status >= 200 && xhr.status < 300) {
                         resolve();
                     } else {
-                        reject(new Error("Upload failed: " + xhr.statusText));
+                        let errMsg = "Upload failed (" + xhr.status + ")";
+                        try {
+                            const errData = JSON.parse(xhr.responseText);
+                            if (errData && errData.message) {
+                                errMsg = errData.message;
+                            }
+                        } catch (e) {}
+                        reject(new Error(errMsg));
                     }
                 };
 
                 xhr.onerror = () => reject(new Error("Network upload error"));
 
-                const uploadUrl = '/upload?filename=' + encodeURIComponent(file.name);
+                const isAndroid = window.location.search && window.location.search.includes('source=android');
+                const srcQuery = isAndroid ? '&source=android' : '';
+                const uploadUrl = '/upload?filename=' + encodeURIComponent(file.name) + srcQuery;
                 xhr.open('POST', uploadUrl, true);
                 xhr.send(file);
             });
@@ -2228,14 +2290,18 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         elif path == '/api/files':
             files_list = []
             selected = getattr(self.app, "selected_files", [])
+            img_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
             for idx, fpath in enumerate(selected):
                 if os.path.exists(fpath):
                     sz = os.path.getsize(fpath)
+                    _, ext = os.path.splitext(fpath.lower())
+                    has_thumb = ext in img_exts
                     files_list.append({
                         "index": idx,
                         "name": os.path.basename(fpath),
                         "size": sz,
-                        "formatted_size": format_bytes(sz)
+                        "formatted_size": format_bytes(sz),
+                        "thumb_url": f"/thumb/{idx}" if has_thumb else None
                     })
             data = json.dumps(files_list).encode('utf-8')
             self.send_response(200)
@@ -2245,6 +2311,38 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+
+        elif path.startswith('/thumb/'):
+            try:
+                idx_str = path[len('/thumb/'):]
+                idx = int(idx_str)
+                selected = getattr(self.app, "selected_files", [])
+                if idx < 0 or idx >= len(selected):
+                    self.send_error(404, "Thumbnail index out of range")
+                    return
+                filepath = selected[idx]
+                if not os.path.exists(filepath):
+                    self.send_error(404, "File not found")
+                    return
+
+                with Image.open(filepath) as img:
+                    img = img.convert('RGB')
+                    img.thumbnail((120, 120))
+                    bio = io.BytesIO()
+                    img.save(bio, format='JPEG', quality=80)
+                    thumb_data = bio.getvalue()
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', str(len(thumb_data)))
+                self.send_header('Cache-Control', 'public, max-age=3600')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(thumb_data)
+                return
+            except Exception as e:
+                self.send_error(500, f"Thumbnail generation error: {e}")
+                return
 
         elif path == '/api/clipboard':
             text = self.app.get_clipboard_safe()
@@ -2368,8 +2466,31 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             filename = clean_filename
 
             content_len = int(self.headers.get('Content-Length', 0))
-            recv_dir = getattr(self.app, "iphone_received_dir", IPHONE_RECEIVED_DIR)
+
+            # Detect whether source is Android (query parameter or User-Agent)
+            user_agent = self.headers.get('User-Agent', '')
+            is_android = (query.get('source', [''])[0].lower() == 'android') or ('Android' in user_agent)
+
+            recv_dir = getattr(self.app, "android_received_dir", ANDROID_RECEIVED_DIR) if is_android else getattr(self.app, "iphone_received_dir", IPHONE_RECEIVED_DIR)
             os.makedirs(recv_dir, exist_ok=True)
+
+            # Free Disk Space Guard: check available disk space before pre-allocation / streaming
+            try:
+                free_space = shutil.disk_usage(recv_dir).free
+                if content_len > free_space:
+                    err_resp = json.dumps({
+                        "status": "error",
+                        "message": "⚠️ Not enough free disk space on receiver"
+                    }).encode('utf-8')
+                    self.send_response(507)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(err_resp)))
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(err_resp)
+                    return
+            except Exception:
+                pass
 
             part_path = os.path.join(recv_dir, filename + ".part")
             final_path = os.path.join(recv_dir, filename)
@@ -2398,8 +2519,12 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                         os.remove(final_path)
                     os.rename(part_path, final_path)
 
-                if hasattr(self.app, "on_ios_receive_complete"):
-                    self.app.after(0, lambda p=final_path: self.app.on_ios_receive_complete(p))
+                if is_android:
+                    if hasattr(self.app, "on_android_receive_complete"):
+                        self.app.after(0, lambda p=final_path: self.app.on_android_receive_complete(p))
+                else:
+                    if hasattr(self.app, "on_ios_receive_complete"):
+                        self.app.after(0, lambda p=final_path: self.app.on_ios_receive_complete(p))
 
                 resp = json.dumps({"status": "ok", "filename": os.path.basename(final_path), "size": content_len}).encode('utf-8')
                 self.send_response(200)
@@ -2571,7 +2696,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.1 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.2 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -2598,6 +2723,17 @@ class PCReceiverServer:
             total_chunks = manifest.get("total_chunks", 1)
 
             os.makedirs(PC_RECEIVED_DIR, exist_ok=True)
+
+            # Free Disk Space Guard: check available disk space before pre-allocation / streaming
+            try:
+                free_space = shutil.disk_usage(PC_RECEIVED_DIR).free
+                if filesize > free_space:
+                    sock.sendall(b"ERR_DISK_SPACE: Not enough free disk space on receiver")
+                    sock.close()
+                    return
+            except Exception:
+                pass
+
             dest_path = os.path.join(PC_RECEIVED_DIR, clean_filename)
             base, ext = os.path.splitext(clean_filename)
             c = 1
@@ -2827,7 +2963,10 @@ class HighSpeedTransferEngine:
 
                 resp = ctrl_sock.recv(1024)
                 if b"MANIFEST_OK" not in resp:
-                    errors.append(f"{filename}: Receiver rejected manifest ({resp})")
+                    if b"ERR_DISK_SPACE" in resp:
+                        errors.append(f"{filename}: ⚠️ Not enough free disk space on receiver")
+                    else:
+                        errors.append(f"{filename}: Receiver rejected manifest ({resp.decode('utf-8', errors='replace')})")
                     ctrl_sock.close()
                     continue
             except Exception as e:
@@ -3162,7 +3301,7 @@ class ScrollableFrame(tk.Frame):
 class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
-        self.title("AirBeam v5.1 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title("AirBeam v5.2 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3203,7 +3342,9 @@ class AirBeamSenderApp(BaseTkApp):
         self.pc_receiver = PCReceiverServer(self, port=NIO_PORT)
         self.pc_receiver.start()
 
-        # iPhone Portal & Hotspot variables
+        # Android & iPhone Portal & Hotspot variables
+        self.android_received_dir = ANDROID_RECEIVED_DIR
+        os.makedirs(self.android_received_dir, exist_ok=True)
         self.iphone_portal_port = IPHONE_PORTAL_PORT
         self.iphone_received_dir = IPHONE_RECEIVED_DIR
         os.makedirs(self.iphone_received_dir, exist_ok=True)
@@ -3237,7 +3378,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.1')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.2')
         except Exception:
             pass
 
@@ -3384,6 +3525,123 @@ class AirBeamSenderApp(BaseTkApp):
     def on_ios_receive_complete(self, dest_path: str):
         self.update_ios_files_summary()
         self.notify_incoming_file_arrived(dest_path)
+
+    def on_android_receive_complete(self, dest_path: str):
+        self.update_android_received_summary()
+        self.notify_incoming_file_arrived(dest_path)
+
+    def preview_selected_file(self, event=None, listbox=None, file_list=None):
+        if listbox is None:
+            listbox = getattr(self, "listbox_files", None)
+        if file_list is None:
+            file_list = getattr(self, "selected_files", [])
+        if not listbox:
+            return
+        sel = listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if 0 <= idx < len(file_list):
+            fpath = file_list[idx]
+            if os.path.exists(fpath):
+                try:
+                    os.startfile(fpath)
+                except Exception as e:
+                    print(f"Error opening file preview for {fpath}: {e}")
+
+    def select_all_listbox(self, listbox):
+        if listbox and listbox.winfo_exists():
+            listbox.select_set(0, tk.END)
+        return "break"
+
+    def open_android_received_folder(self):
+        os.makedirs(self.android_received_dir, exist_ok=True)
+        try:
+            os.startfile(self.android_received_dir)
+        except Exception:
+            subprocess.Popen(["explorer.exe", self.android_received_dir])
+
+    def clear_android_received_folder(self):
+        os.makedirs(self.android_received_dir, exist_ok=True)
+        try:
+            items = os.listdir(self.android_received_dir)
+        except Exception:
+            items = []
+
+        if not items:
+            messagebox.showinfo("Folder Empty", "The 'Received_From_Android' folder is already empty! No files to clear.")
+            return
+
+        total_bytes = 0
+        file_paths = []
+        for name in items:
+            fp = os.path.join(self.android_received_dir, name)
+            if os.path.isfile(fp):
+                total_bytes += os.path.getsize(fp)
+                file_paths.append(fp)
+            elif os.path.isdir(fp):
+                file_paths.append(fp)
+
+        ans = messagebox.askyesno(
+            "Clear Uploaded Files",
+            f"Are you sure you want to permanently delete all {len(file_paths)} file(s) ({format_bytes(total_bytes)}) in 'Received_From_Android'?"
+        )
+        if not ans:
+            return
+
+        deleted = 0
+        for fp in file_paths:
+            try:
+                if os.path.isfile(fp):
+                    os.remove(fp)
+                    deleted += 1
+                elif os.path.isdir(fp):
+                    shutil.rmtree(fp, ignore_errors=True)
+                    deleted += 1
+            except Exception:
+                pass
+
+        self.update_android_received_summary()
+        messagebox.showinfo("Files Deleted", f"Successfully cleared {deleted} file(s) from 'Received_From_Android'.")
+
+    def update_android_received_summary(self):
+        if not hasattr(self, "lbl_android_received_summary") or not self.lbl_android_received_summary.winfo_exists():
+            return
+        recv_count = 0
+        recv_bytes = 0
+        try:
+            if os.path.exists(self.android_received_dir):
+                for name in os.listdir(self.android_received_dir):
+                    fp = os.path.join(self.android_received_dir, name)
+                    if os.path.isfile(fp):
+                        recv_count += 1
+                        recv_bytes += os.path.getsize(fp)
+        except Exception:
+            pass
+
+        text = f"📥 Received from Android: {recv_count} file(s) ({format_bytes(recv_bytes)})"
+        self.lbl_android_received_summary.config(text=text)
+
+    def copy_android_portal_url(self):
+        ip = get_local_ip()
+        url = f"http://{ip}:{self.iphone_portal_port}/index.html?source=android"
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        messagebox.showinfo("Copied", f"Copied Android Web Portal link to clipboard:\n{url}")
+
+    def update_android_rx_view(self):
+        if not hasattr(self, "qr_android_rx_label") or not self.qr_android_rx_label.winfo_exists():
+            return
+        ip = get_local_ip()
+        self.local_ip = ip
+        portal_url = f"http://{ip}:{self.iphone_portal_port}/index.html?source=android"
+        qr_img = self.generate_qr_image(portal_url, box_size=3, border=2)
+        if qr_img:
+            self.qr_android_rx_label.config(image=qr_img)
+            self.qr_android_rx_label.image = qr_img
+        if hasattr(self, "lbl_android_portal_url") and self.lbl_android_portal_url.winfo_exists():
+            self.lbl_android_portal_url.config(text=f"🌐 Portal Link: {portal_url}")
+        self.update_android_received_summary()
 
     def on_global_paste(self, event=None):
         focused = self.focus_get()
@@ -3626,6 +3884,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.2-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.2-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.1-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.1-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.0-Receiver.apk"),
@@ -3939,7 +4199,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_app_brand = tk.Label(
             top_bar,
-            text="⚡ AirBeam v5.1  |  Ultra-Speed Cross-Platform Wireless Transfer",
+            text="⚡ AirBeam v5.2  |  Ultra-Speed Cross-Platform Wireless Transfer",
             bg="#0f172a",
             fg="#38bdf8",
             font=("Segoe UI", 10, "bold")
@@ -4129,6 +4389,7 @@ class AirBeamSenderApp(BaseTkApp):
             height=7,
             bg="#0f172a",
             fg="#f8fafc",
+            selectmode=tk.EXTENDED,
             selectbackground="#2563eb",
             selectforeground="#ffffff",
             font=("Segoe UI", 10),
@@ -4141,6 +4402,9 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.listbox_files.bind("<Delete>", lambda e: (self.remove_selected_file(), "break")[1])
         self.listbox_files.bind("<BackSpace>", lambda e: (self.remove_selected_file(), "break")[1])
+        self.listbox_files.bind("<Double-Button-1>", lambda e: self.preview_selected_file(e, self.listbox_files, self.selected_files))
+        self.listbox_files.bind("<Control-a>", lambda e: self.select_all_listbox(self.listbox_files))
+        self.listbox_files.bind("<Control-A>", lambda e: self.select_all_listbox(self.listbox_files))
 
         self.register_drop_target(files_card)
         self.register_drop_target(self.listbox_files)
@@ -4182,6 +4446,82 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.btn_report = ttk.Button(ctrl_frame, text="📊 Speed Report", style="Secondary.TButton", command=self.generate_speed_report)
         self.btn_report.pack(side="right", padx=(6, 0))
+
+        # 4. Receive Files from Android Tablet Card (Two-Way Android Transfer)
+        rx_android_card = ttk.Frame(container, style="Card.TFrame", padding=14)
+        rx_android_card.pack(fill="x", padx=10, pady=(0, 14))
+
+        top_rx_android = tk.Frame(rx_android_card, bg="#1e293b")
+        top_rx_android.pack(fill="x", pady=(0, 6))
+
+        ttk.Label(top_rx_android, text="📥 Receive Files from Android Tablet", style="CardHeader.TLabel").pack(side="left")
+
+        self.lbl_android_rx_badge = tk.Label(
+            top_rx_android, text=f"🟢 Web Portal Active (Port {self.iphone_portal_port})",
+            bg="#064e3b", fg="#34d399", font=("Segoe UI", 9, "bold"), padx=8, pady=2
+        )
+        self.lbl_android_rx_badge.pack(side="right")
+
+        ttk.Label(
+            rx_android_card,
+            text="Scan the QR code with your Samsung tablet or open the link below in Chrome to send files, photos, and screen recordings to this PC at 50–90+ MB/s.",
+            style="CardBody.TLabel"
+        ).pack(anchor="w", pady=(0, 8))
+
+        rx_body_frame = tk.Frame(rx_android_card, bg="#0f172a", padx=10, pady=8, highlightthickness=1, highlightbackground="#334155")
+        rx_body_frame.pack(fill="x", pady=(0, 8))
+
+        qr_box = tk.Frame(rx_body_frame, bg="#1e293b", padx=8, pady=6, highlightthickness=1, highlightbackground="#10b981")
+        qr_box.pack(side="left", padx=(0, 10))
+
+        tk.Label(qr_box, text="📲 Scan with Tablet", bg="#1e293b", fg="#10b981", font=("Segoe UI", 9, "bold")).pack(pady=(0, 2))
+        self.qr_android_rx_label = tk.Label(qr_box, bg="#1e293b")
+        self.qr_android_rx_label.pack(pady=2)
+
+        rx_info = tk.Frame(rx_body_frame, bg="#0f172a")
+        rx_info.pack(side="left", fill="both", expand=True)
+
+        android_portal_url = f"http://{get_local_ip()}:{self.iphone_portal_port}/index.html?source=android"
+        self.lbl_android_portal_url = tk.Label(
+            rx_info, text=f"🌐 Portal Link: {android_portal_url}",
+            bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 10, "bold"), anchor="w"
+        )
+        self.lbl_android_portal_url.pack(fill="x", pady=(4, 6))
+
+        btn_bar = tk.Frame(rx_info, bg="#0f172a")
+        btn_bar.pack(fill="x", pady=(0, 6))
+
+        btn_copy_url = tk.Button(
+            btn_bar, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            command=self.copy_android_portal_url
+        )
+        btn_copy_url.pack(side="left", padx=(0, 6))
+
+        btn_open_browser = tk.Button(
+            btn_bar, text="🌐 Open Portal", bg="#334155", fg="#f8fafc",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            command=lambda: webbrowser.open(f"http://127.0.0.1:{self.iphone_portal_port}/index.html?source=android")
+        )
+        btn_open_browser.pack(side="left")
+
+        # Action bar with Open & Clear buttons
+        action_bar = tk.Frame(rx_android_card, bg="#1e293b")
+        action_bar.pack(fill="x", pady=(4, 0))
+
+        self.lbl_android_received_summary = tk.Label(
+            action_bar, text="📥 Received from Android: 0 file(s) (0 B)",
+            bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold")
+        )
+        self.lbl_android_received_summary.pack(side="left")
+
+        btn_clear_rx = ttk.Button(action_bar, text="🧹 Clear", style="Secondary.TButton", command=self.clear_android_received_folder)
+        btn_clear_rx.pack(side="right", padx=(4, 0))
+
+        btn_open_rx = ttk.Button(action_bar, text="📂 Open Received_From_Android", style="Primary.TButton", command=self.open_android_received_folder)
+        btn_open_rx.pack(side="right")
+
+        self.update_android_rx_view()
 
     def set_connection_mode(self, mode):
         self.connection_mode.set(mode)
@@ -4527,6 +4867,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.listbox_pc_files = tk.Listbox(
             pc_list_frame, height=5, bg="#0f172a", fg="#f8fafc",
+            selectmode=tk.EXTENDED,
             selectbackground="#2563eb", selectforeground="#ffffff",
             font=("Segoe UI", 10), bd=0, highlightthickness=0,
             yscrollcommand=pc_scrollbar.set
@@ -4536,6 +4877,9 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.listbox_pc_files.bind("<Delete>", lambda e: (self.remove_selected_pc_file(), "break")[1])
         self.listbox_pc_files.bind("<BackSpace>", lambda e: (self.remove_selected_pc_file(), "break")[1])
+        self.listbox_pc_files.bind("<Double-Button-1>", lambda e: self.preview_selected_file(e, self.listbox_pc_files, self.pc_selected_files))
+        self.listbox_pc_files.bind("<Control-a>", lambda e: self.select_all_listbox(self.listbox_pc_files))
+        self.listbox_pc_files.bind("<Control-A>", lambda e: self.select_all_listbox(self.listbox_pc_files))
 
         self.register_drop_target(send_card)
         self.register_drop_target(self.listbox_pc_files)
@@ -4673,11 +5017,14 @@ class AirBeamSenderApp(BaseTkApp):
     def add_pc_folder(self):
         folder = filedialog.askdirectory(title="Select folder to beam to PC")
         if folder:
-            for root, _, filenames in os.walk(folder):
-                for fn in filenames:
-                    full = os.path.join(root, fn)
-                    if full not in self.pc_selected_files:
-                        self.pc_selected_files.append(full)
+            status_lbl = getattr(self, "lbl_pc_total_size", None)
+            folder_name = os.path.basename(folder)
+            if status_lbl and status_lbl.winfo_exists():
+                status_lbl.config(text=f"📦 Packaging folder '{folder_name}' into fast archive...")
+                self.update_idletasks()
+            zip_path = package_folder_to_zip(folder)
+            if zip_path and zip_path not in self.pc_selected_files:
+                self.pc_selected_files.append(zip_path)
             self.update_pc_file_listbox()
 
     def clear_pc_files(self):
@@ -4982,11 +5329,9 @@ class AirBeamSenderApp(BaseTkApp):
                 if status_lbl and status_lbl.winfo_exists():
                     status_lbl.config(text=f"📦 Packaging dropped folder '{folder_name}'...")
                     self.update_idletasks()
-                for root, _, filenames in os.walk(path):
-                    for fn in filenames:
-                        full = os.path.normpath(os.path.join(root, fn))
-                        if os.path.isfile(full) and full not in self.pc_selected_files:
-                            self.pc_selected_files.append(full)
+                zip_path = package_folder_to_zip(path)
+                if zip_path and zip_path not in self.pc_selected_files:
+                    self.pc_selected_files.append(zip_path)
         self.update_pc_file_listbox()
 
     def _on_main_files_dropped(self, files):
@@ -5008,11 +5353,9 @@ class AirBeamSenderApp(BaseTkApp):
                 if status_ios and status_ios.winfo_exists():
                     status_ios.config(text=msg)
                 self.update_idletasks()
-                for root, _, filenames in os.walk(path):
-                    for fn in filenames:
-                        full = os.path.normpath(os.path.join(root, fn))
-                        if os.path.isfile(full) and full not in self.selected_files:
-                            self.selected_files.append(full)
+                zip_path = package_folder_to_zip(path)
+                if zip_path and zip_path not in self.selected_files:
+                    self.selected_files.append(zip_path)
         self.refresh_file_list()
         self.update_ios_files_summary()
 
@@ -5188,7 +5531,7 @@ class AirBeamSenderApp(BaseTkApp):
         container = ttk.Frame(scroll_frame.scrollable_window, style="Card.TFrame", padding=20)
         container.pack(fill="both", expand=True)
 
-        apk_filename = os.path.basename(self.apk_path) if self.apk_path else ("AirBeam-v5.1-Receiver.apk" if os.path.exists(os.path.join(APP_ROOT, "AirBeam-v5.1-Receiver.apk")) else "AirBeam-v5.0-Receiver.apk")
+        apk_filename = os.path.basename(self.apk_path) if self.apk_path else ("AirBeam-v5.2-Receiver.apk" if os.path.exists(os.path.join(APP_ROOT, "AirBeam-v5.2-Receiver.apk")) else "AirBeam-v5.0-Receiver.apk")
         ttk.Label(container, text=f"Install {apk_filename} on Android", style="CardHeader.TLabel").pack(anchor="center")
         ttk.Label(container, text="Scan with your tablet camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
 
@@ -5202,12 +5545,12 @@ class AirBeamSenderApp(BaseTkApp):
         self.generate_qr_code(apk_url)
 
         instructions = (
-            "AirBeam v5.1 Update Features:\n"
-            "• Interactive Hotspot Toggle Switch: 1-click connect/disconnect with home Wi-Fi auto-restore.\n"
-            "• Pipelined 6-Stream Turbo Engine: Zero stop-and-wait stalls with 8 MB socket buffer.\n"
-            "• Precision Speedometer: Receiver-confirmed rolling window EMA & pause-aware timer.\n"
-            "• Live Wi-Fi Telemetry Badge: Shows real-time link rate, band, channel & 5 GHz tip.\n"
-            "• Instant Clipboard Beam: Beam copied text & URLs from PC to Android with 1-click open."
+            "AirBeam v5.2 Update Features:\n"
+            "• Two-Way Android Transfer: Tablet can beam files/photos back to PC via high-speed Web Portal.\n"
+            "• Preserved Folder Hierarchy: Dropped and right-clicked folders staged as fast ZIP_STORED archives.\n"
+            "• Visual Image Thumbnails: Web Portal previews staged images before downloading.\n"
+            "• Free Disk Space Guard: Receiver checks free storage before accepting transfers.\n"
+            "• Double-Click Preview & Ctrl+A: Instantly preview staged files and select all with keyboard."
         )
         lbl_instruct = tk.Label(container, text=instructions, justify="left", bg="#0f172a", fg="#cbd5e1", font=("Segoe UI", 9), padx=14, pady=12)
         lbl_instruct.pack(fill="x", pady=14)
@@ -5242,7 +5585,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Header Info Card
         header_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         header_card.pack(fill="x", padx=10, pady=(6, 10))
-        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.1)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.2)", style="CardHeader.TLabel").pack(anchor="w")
         ttk.Label(header_card, text="Zero app installation required on iOS! Use Option 1 below for instant transfer over Home Wi-Fi, or Options 2 & 3 for direct router-bypass speeds (50–95+ MB/s).", style="CardBody.TLabel").pack(anchor="w", pady=(2, 0))
 
         # --- OPTION 1: Transfer Over Home Wi-Fi Router (Zero Hotspot Required) ---
@@ -5446,6 +5789,7 @@ class AirBeamSenderApp(BaseTkApp):
             height=6,
             bg="#0f172a",
             fg="#f8fafc",
+            selectmode=tk.EXTENDED,
             selectbackground="#2563eb",
             selectforeground="#ffffff",
             font=("Segoe UI", 10),
@@ -5458,6 +5802,9 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.listbox_ios_files.bind("<Delete>", lambda e: (self.remove_selected_file(), "break")[1])
         self.listbox_ios_files.bind("<BackSpace>", lambda e: (self.remove_selected_file(), "break")[1])
+        self.listbox_ios_files.bind("<Double-Button-1>", lambda e: self.preview_selected_file(e, self.listbox_ios_files, self.selected_files))
+        self.listbox_ios_files.bind("<Control-a>", lambda e: self.select_all_listbox(self.listbox_ios_files))
+        self.listbox_ios_files.bind("<Control-A>", lambda e: self.select_all_listbox(self.listbox_ios_files))
 
         self.register_drop_target(ios_files_card)
         self.register_drop_target(self.listbox_ios_files)
@@ -5800,6 +6147,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.active_opt3_portal_url = portal_url
         img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
         cur_wifi = get_current_wifi_profile() or get_best_home_wifi_profile(self) or "Home Wi-Fi"
+        self.update_android_rx_view()
 
         top_row = tk.Frame(self.opt3_action_frame, bg="#0f172a")
         top_row.pack(fill="x", pady=(0, 4))
@@ -5938,7 +6286,7 @@ class AirBeamSenderApp(BaseTkApp):
                 except Exception as e:
                     messagebox.showerror("Firewall Error", f"Failed to run Fix-AirBeam-Firewall.bat: {e}")
         else:
-            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.1 folder.")
+            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.2 folder.")
 
     def toggle_connect_to_iphone_hotspot(self, target_state):
         if target_state:
@@ -6277,12 +6625,20 @@ class AirBeamSenderApp(BaseTkApp):
     def add_folder(self):
         folder = filedialog.askdirectory(title="Select folder to beam")
         if folder:
-            for root, _, files in os.walk(folder):
-                for f in files:
-                    full = os.path.join(root, f)
-                    if full not in self.selected_files:
-                        self.selected_files.append(full)
+            status_lbl = getattr(self, "lbl_total_size", None)
+            status_ios = getattr(self, "lbl_ios_total_size", None)
+            folder_name = os.path.basename(folder)
+            msg = f"📦 Packaging folder '{folder_name}' into fast archive..."
+            if status_lbl and status_lbl.winfo_exists():
+                status_lbl.config(text=msg)
+            if status_ios and status_ios.winfo_exists():
+                status_ios.config(text=msg)
+            self.update_idletasks()
+            zip_path = package_folder_to_zip(folder)
+            if zip_path and zip_path not in self.selected_files:
+                self.selected_files.append(zip_path)
             self.refresh_file_list()
+            self.update_ios_files_summary()
 
     def clear_files(self):
         if self.is_sending: return
@@ -6858,7 +7214,7 @@ class AirBeamSenderApp(BaseTkApp):
             "parallel_streams": PARALLEL_STREAMS,
             "stripe_size_mb": DEFAULT_STRIPE_SIZE // (1024 * 1024),
             "chunk_slice_kb": CHUNK_SLICE_BYTES // 1024,
-            "status": "AirBeam v5.1 Ultra-Speed Multi-Stream Ready",
+            "status": "AirBeam v5.2 Ultra-Speed Multi-Stream Ready",
             "diagnostics": {
                 "router_bypassed": is_direct_hotspot,
                 "connection_mode_description": mode_desc,
