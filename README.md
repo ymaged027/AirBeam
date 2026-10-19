@@ -1,25 +1,30 @@
-# AirBeam v4.5: Ultra-Speed Wireless Transfer (PC to PC, Android & iPhone / iOS)
+# AirBeam v4.6: Ultra-Speed Wireless Transfer (PC to PC, Android & iPhone / iOS)
 
-AirBeam v4.5 expands ultra-speed wireless transfers across **Windows PCs, Android tablets/phones, and iPhone / iOS devices**, reaching hardware-saturating speeds (**50–100+ MB/s**) with native multi-stream pipelining, dual connection modes for PC-to-PC, auto-hotspot shutdown on exit, labeled QR codes, and zero-install web modes!
+AirBeam v4.6 delivers ultra-speed wireless transfers across **Windows PCs, Android tablets/phones, and iPhone / iOS devices**, reaching hardware-saturating speeds (**50–100+ MB/s**) with native multi-stream pipelining, dual connection modes for PC-to-PC, auto-hotspot shutdown on exit, labeled QR codes, and zero-install web modes!
 
 ---
 
-## ⚡ What's New in v4.5
+## ⚡ What's New in v4.6
 
-### 1. 🎨 High-Contrast Target PC IP Input Box
-- Replaced system ttk entry with a dark navy background (`#0f172a`), vivid cyan monospace text (`#38bdf8`), cyan insertion cursor, and slate border (`#475569`).
+### 1. 🧹 Streamlined Clean Workspace & Repository
+- Cleaned all legacy interim batch launchers, obsolete per-step report markdown files, and legacy interim setups.
+- Maintained a clean, production-grade root folder with universal launcher [Launch-AirBeam.bat](file:///C:/Users/youssef/WirelessFileTransfer-v3.0/Launch-AirBeam.bat) and versioned launcher [Launch-AirBeam-v4.6.bat](file:///C:/Users/youssef/WirelessFileTransfer-v3.0/Launch-AirBeam-v4.6.bat).
+- Master project chat history is preserved in [AIRBEAM_PROJECT_CHAT_HISTORY.md](file:///C:/Users/youssef/WirelessFileTransfer-v3.0/AIRBEAM_PROJECT_CHAT_HISTORY.md).
+
+### 2. 🎨 High-Contrast Target PC IP Input Box
+- Dark navy background (`#0f172a`), vivid cyan monospace text (`#38bdf8`), cyan insertion cursor, and slate border (`#475569`).
 - Completely resolves text visibility issues where text and background were previously the same color.
 
-### 2. 🏷️ Clearly Labeled QR Codes in "PC to PC" Tab
-- **📶 Connect Wi-Fi QR Card**: Scan with mobile camera or tablet to automatically connect to the 5 GHz `airbeam` hotspot without typing passwords.
+### 3. 🏷️ Clearly Labeled QR Codes in "PC to PC" Tab
+- **📶 Connect Wi-Fi QR Card**: Scan to automatically connect to the 5 GHz `airbeam` hotspot without typing passwords.
 - **🌐 Open Web Portal QR Card**: Scan to immediately load `http://192.168.137.1:8080/index.html` in Chrome, Safari, or Edge for zero-install file transfer.
 - **🌐 Web Portal Link Card**: Clearly labeled with subheadings in the Zero-Install Web card for quick peer access.
 
-### 3. 🛑 Automatic Windows Hotspot Shutdown on Exit
+### 4. 🛑 Automatic Windows Hotspot Shutdown on Exit
 - Whenever you close AirBeam (via the title bar `[X]` button or process exit), Windows Mobile Hotspot is automatically stopped in the background.
 - Eliminates stranded virtual network adapters and frees your Wi-Fi interface immediately.
 
-### 4. 💻 Dual Connection Modes for PC-to-PC Transfer (Tab 2)
+### 5. 💻 Dual Connection Modes for PC-to-PC Transfer (Tab 2)
 - **🏠 Home / Office Wi-Fi Mode**:
   - Direct peer-to-peer transfer across devices connected to the same local Wi-Fi router.
   - Zero-configuration setup with automatic UDP peer discovery on port 7778.
@@ -30,11 +35,6 @@ AirBeam v4.5 expands ultra-speed wireless transfers across **Windows PCs, Androi
   - Features an animated `HotspotToggleSwitch` widget for one-click hotspot activation.
   - Live credentials card displaying SSID, password, and direct URL.
   - Automatic ARP discovery (`get_connected_hotspot_client_ips()`) that auto-detects and populates connected client PCs in real-time.
-
-### 5. 📥 Real-Time Multi-Stream PC Receiver (`PCReceiverServer`)
-- Automatically listens on TCP port 7777 with `SO_REUSEADDR`, `TCP_NODELAY`, and 8 MB socket receive buffers across both Home Wi-Fi and Hotspot interfaces.
-- Streams incoming files directly into [Received_From_PC](file:///C:/Users/youssef/WirelessFileTransfer-v3.0/Received_From_PC) with live speed reporting and determinate progress bars.
-- Dedicated `📂 Open Received Folder` and `🧹 Clear Received` buttons.
 
 ---
 
@@ -49,25 +49,23 @@ AirBeam v4.5 expands ultra-speed wireless transfers across **Windows PCs, Androi
 
 ---
 
-## 📂 Project Structure
+## 📂 Clean Project Structure
 
 ```
 C:\Users\youssef\WirelessFileTransfer-v3.0\
-├── setup-output\
-│   ├── AirBeam-v4.2-Setup.exe        # Standalone Windows Installer Wizard
-│   └── AirBeam-v4.2-Portable.zip      # Portable No-Install Archive
-├── dist\AirBeam\                      # Compiled standalone runtime directory
 ├── desktop-sender\
-│   ├── sender.py                      # v4.5 Core GUI Application (4 Tabs)
+│   ├── sender.py                      # v4.6 Core GUI Application (4 Tabs)
 │   └── assets\                        # Icons, logos, and UI graphics
 ├── android-app\                       # Native Android Receiver project (Java NIO, 6-Stream Turbo)
 ├── release\                           # AirBeam-v2.7-Receiver.apk (Knox V1+V2 signed)
-├── Received_From_PC\                  # Target folder for files received from other PCs
-├── Received_From_iPhone\              # Target folder for files uploaded from iOS devices
+├── setup-output\                      # Installer packages (v4.2 builds; v4.6 ready in Inno Setup)
 ├── Fix-AirBeam-Firewall.bat           # One-click Admin Firewall fix
-├── Launch-AirBeam-v4.5.bat            # v4.5 Local launcher
-├── AirBeam-Setup.iss                  # Inno Setup 6 installer script (v4.5 ready)
-└── create_shortcut.ps1                # Generates desktop shortcuts
+├── Launch-AirBeam.bat                 # Universal launcher
+├── Launch-AirBeam-v4.6.bat            # v4.6 Local launcher
+├── AirBeam-Setup.iss                  # Inno Setup 6 installer script (v4.6 ready)
+├── create_shortcut.ps1                # Generates desktop shortcuts
+├── README.md                          # Primary project documentation
+└── AIRBEAM_PROJECT_CHAT_HISTORY.md    # Master cumulative chat history (Phases 1–24)
 ```
 
 > [!NOTE]
