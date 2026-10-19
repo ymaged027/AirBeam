@@ -1,7 +1,7 @@
 # ⚡ AirBeam v5.1: Ultra-Speed Wireless Transfer
 ### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC, Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v5.1-0284c7?style=for-the-badge&logo=windows&logoColor=white)](Launch-AirBeam-v5.1.bat)
+[![Release](https://img.shields.io/badge/Release-v5.1-0284c7?style=for-the-badge&logo=windows&logoColor=white)](AirBeam.exe)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v5.0-Receiver.apk?raw=true)
@@ -170,14 +170,18 @@ AirBeam/
 │   └── AirBeam-v5.0-Portable.zip      # Portable Standalone Archive (43.6 MB)
 ├── desktop-sender/
 │   ├── sender.py                      # Core Python GUI & Multi-Stream Engine
+│   ├── AirBeamLauncher.cs             # Native Windows C# launcher source
+│   ├── Fix-AirBeam-Firewall.bat       # Sub-module firewall helper
 │   └── assets/                        # High-resolution icons and logos
 ├── android-app/                       # Native Android Receiver project (Java NIO)
 ├── release/
+│   ├── AirBeam-Receiver.apk           # Standalone Android receiver APK
 │   └── AirBeam-v5.0-Receiver.apk      # Knox V1+V2 signed Android receiver APK
+├── AirBeam.exe                        # Native Windows GUI Launcher (Embedded Icon & Zero Console)
 ├── Fix-AirBeam-Firewall.bat           # Self-elevating Windows Firewall configurator
-├── Launch-AirBeam.bat                 # Universal launcher script (forwards CLI arguments)
-├── Launch-AirBeam-v5.1.bat            # Production launcher script (v5.1)
 ├── AirBeam-Setup.iss                  # Inno Setup 6 compiler configuration
+├── AirBeam.spec                       # Standalone PyInstaller build configuration
+├── create_portable_zip.ps1            # Standalone distribution zip packager
 ├── create_shortcut.ps1                # Desktop shortcut generator
 ├── README.md                          # Master documentation & benchmark guide
 └── AIRBEAM_PROJECT_CHAT_HISTORY.md    # Complete cumulative project chat history

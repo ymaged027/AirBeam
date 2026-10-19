@@ -347,13 +347,18 @@ def register_explorer_context_menu() -> bool:
             cmd = f'"{sys.executable}" "%1"'
             icon = sys.executable
         else:
-            py_dir = os.path.dirname(sys.executable)
-            pythonw = os.path.join(py_dir, "pythonw.exe")
-            py_exe = pythonw if os.path.exists(pythonw) else sys.executable
-            sender_script = os.path.abspath(__file__)
-            cmd = f'"{py_exe}" "{sender_script}" "%1"'
-            icon_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "airbeam.ico")
-            icon = icon_candidate if os.path.exists(icon_candidate) else sys.executable
+            root_exe = os.path.join(APP_ROOT, "AirBeam.exe")
+            if os.path.exists(root_exe):
+                cmd = f'"{root_exe}" "%1"'
+                icon = root_exe
+            else:
+                py_dir = os.path.dirname(sys.executable)
+                pythonw = os.path.join(py_dir, "pythonw.exe")
+                py_exe = pythonw if os.path.exists(pythonw) else sys.executable
+                sender_script = os.path.abspath(__file__)
+                cmd = f'"{py_exe}" "{sender_script}" "%1"'
+                icon_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "airbeam.ico")
+                icon = icon_candidate if os.path.exists(icon_candidate) else sys.executable
 
         for key_path in (r"Software\Classes\*\shell\AirBeam", r"Software\Classes\Directory\shell\AirBeam"):
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as k:

@@ -26,6 +26,8 @@ Received_From_iPhone/
 last_home_wifi.txt
 last_transfer_stats.json
 AirBeam_Diagnostic_Report.json
+iphone_hotspot_config.json
+airbeam_config.json
 
 # IDE & OS Files
 .vscode/
