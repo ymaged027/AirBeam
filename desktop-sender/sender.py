@@ -105,9 +105,20 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import qrcode
+import ctypes
+from ctypes import wintypes
+from typing import Optional, Dict, List, Set, Any
+try:
+    import winreg
+except Exception:
+    winreg = None
+try:
+    import winsound
+except Exception:
+    winsound = None
 
 # ==============================================================================
-# NATIVE OLE DRAG-AND-DROP ENGINE (TKINTERDND2)
+# NATIVE OLE DRAG-AND-DROP ENGINE (TKINTERDND2 & WIN32 WNDPROC FALLBACK)
 # ==============================================================================
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -121,6 +132,260 @@ if TKDND_AVAILABLE:
 else:
     class BaseTkApp(tk.Tk):
         pass
+
+CF_HDROP = 15
+WM_DROPFILES = 0x0233
+GWLP_WNDPROC = -4
+NATIVE_DND_SUPPORTED = (os.name == 'nt')
+if NATIVE_DND_SUPPORTED:
+    WNDPROC_PROTO = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t,
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM
+    )
+else:
+    WNDPROC_PROTO = None
+
+AIRBEAM_CONFIG_FILE = os.path.join(APP_ROOT, "airbeam_config.json")
+
+
+def get_windows_clipboard_files() -> List[str]:
+    """Extracts file and folder paths from the Windows clipboard if CF_HDROP is present."""
+    files = []
+    if not NATIVE_DND_SUPPORTED:
+        return files
+    try:
+        user32 = getattr(ctypes.windll, "user32", None)
+        shell32 = getattr(ctypes.windll, "shell32", None)
+        if not user32 or not shell32:
+            return files
+        if not user32.OpenClipboard(None):
+            return files
+        try:
+            if user32.IsClipboardFormatAvailable(CF_HDROP):
+                h_drop = user32.GetClipboardData(CF_HDROP)
+                if h_drop:
+                    count = shell32.DragQueryFileW(h_drop, 0xFFFFFFFF, None, 0)
+                    for i in range(count):
+                        buf_len = shell32.DragQueryFileW(h_drop, i, None, 0)
+                        buf = ctypes.create_unicode_buffer(buf_len + 1)
+                        shell32.DragQueryFileW(h_drop, i, buf, buf_len + 1)
+                        if buf.value:
+                            files.append(buf.value)
+        finally:
+            user32.CloseClipboard()
+    except Exception as e:
+        print(f"Error reading clipboard files: {e}")
+    return files
+
+
+def is_explorer_context_menu_registered() -> bool:
+    """Checks whether 'Send with AirBeam' is currently registered in HKCU Explorer context menus."""
+    if not winreg:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\*\shell\AirBeam"):
+            return True
+    except Exception:
+        return False
+
+
+def register_explorer_context_menu() -> bool:
+    """Registers 'Send with AirBeam' into HKCU Explorer context menus (zero Admin rights required)."""
+    if not winreg:
+        return False
+    try:
+        if getattr(sys, "frozen", False):
+            cmd = f'"{sys.executable}" "%1"'
+            icon = sys.executable
+        else:
+            py_dir = os.path.dirname(sys.executable)
+            pythonw = os.path.join(py_dir, "pythonw.exe")
+            py_exe = pythonw if os.path.exists(pythonw) else sys.executable
+            sender_script = os.path.abspath(__file__)
+            cmd = f'"{py_exe}" "{sender_script}" "%1"'
+            icon_candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "airbeam.ico")
+            icon = icon_candidate if os.path.exists(icon_candidate) else sys.executable
+
+        for key_path in (r"Software\Classes\*\shell\AirBeam", r"Software\Classes\Directory\shell\AirBeam"):
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+                winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "Send with AirBeam")
+                winreg.SetValueEx(k, "Icon", 0, winreg.REG_SZ, icon)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\command") as k_cmd:
+                winreg.SetValueEx(k_cmd, "", 0, winreg.REG_SZ, cmd)
+        return True
+    except Exception as e:
+        print(f"Error registering Explorer context menu: {e}")
+        return False
+
+
+def unregister_explorer_context_menu() -> bool:
+    """Removes 'Send with AirBeam' from HKCU Explorer context menus."""
+    if not winreg:
+        return False
+    try:
+        for parent_path in (r"Software\Classes\*\shell\AirBeam", r"Software\Classes\Directory\shell\AirBeam"):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"{parent_path}\\command")
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, parent_path)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        print(f"Error unregistering Explorer context menu: {e}")
+        return False
+
+
+class NativeWindowsDropTarget:
+    """
+    Subclasses top-level and child Win32 HWNDs with explicit 64-bit ctypes prototypes
+    to intercept WM_DROPFILES across the ENTIRE application window.
+    Guards against duplicate subclassing and preserves callback lifetime to prevent
+    infinite recursion (0xC00000FD) and memory crashes (0xC0000005).
+    """
+    def __init__(self, root, callback):
+        self.root = root
+        self.callback = callback
+        self._hooked_hwnds: Dict[int, int] = {}  # hwnd -> original_wndproc
+        self._last_drop_time = 0.0
+        self.user32 = getattr(ctypes.windll, "user32", None) if NATIVE_DND_SUPPORTED else None
+        self.shell32 = getattr(ctypes.windll, "shell32", None) if NATIVE_DND_SUPPORTED else None
+
+        if not self.user32 or not self.shell32 or not WNDPROC_PROTO:
+            return
+
+        if hasattr(self.user32, "SetWindowLongPtrW"):
+            self._set_wndproc = self.user32.SetWindowLongPtrW
+            self._set_wndproc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+            self._set_wndproc.restype = ctypes.c_ssize_t
+
+            self._get_wndproc = self.user32.GetWindowLongPtrW
+            self._get_wndproc.argtypes = [wintypes.HWND, ctypes.c_int]
+            self._get_wndproc.restype = ctypes.c_ssize_t
+        else:
+            self._set_wndproc = self.user32.SetWindowLongW
+            self._set_wndproc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+            self._set_wndproc.restype = ctypes.c_long
+
+            self._get_wndproc = self.user32.GetWindowLongW
+            self._get_wndproc.argtypes = [wintypes.HWND, ctypes.c_int]
+            self._get_wndproc.restype = ctypes.c_long
+
+        self._call_wndproc = self.user32.CallWindowProcW
+        self._call_wndproc.argtypes = [
+            ctypes.c_ssize_t,
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM
+        ]
+        self._call_wndproc.restype = ctypes.c_ssize_t
+
+        self._drag_accept_files = self.shell32.DragAcceptFiles
+        self._drag_accept_files.argtypes = [wintypes.HWND, wintypes.BOOL]
+        self._drag_accept_files.restype = None
+
+        self._drag_query_file = self.shell32.DragQueryFileW
+        self._drag_query_file.argtypes = [
+            wintypes.WPARAM,
+            wintypes.UINT,
+            wintypes.LPWSTR,
+            wintypes.UINT
+        ]
+        self._drag_query_file.restype = wintypes.UINT
+
+        self._drag_finish = self.shell32.DragFinish
+        self._drag_finish.argtypes = [wintypes.WPARAM]
+        self._drag_finish.restype = None
+
+        # Strong instance reference so the ctypes callback is never collected by Python's GC
+        self._wndproc_cb = WNDPROC_PROTO(self._wnd_proc)
+        self._wndproc_ptr = ctypes.cast(self._wndproc_cb, ctypes.c_void_p).value
+
+    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == WM_DROPFILES:
+            h_drop = wparam
+            file_paths = []
+            try:
+                count = self._drag_query_file(h_drop, 0xFFFFFFFF, None, 0)
+                for i in range(count):
+                    buf_len = self._drag_query_file(h_drop, i, None, 0)
+                    buf = ctypes.create_unicode_buffer(buf_len + 1)
+                    self._drag_query_file(h_drop, i, buf, buf_len + 1)
+                    if buf.value:
+                        file_paths.append(buf.value)
+            except Exception as e:
+                print(f"Error querying dropped files: {e}")
+            finally:
+                try:
+                    self._drag_finish(h_drop)
+                except Exception:
+                    pass
+
+            now = time.time()
+            if file_paths and (now - self._last_drop_time) > 0.15:
+                self._last_drop_time = now
+                if self.callback:
+                    self.root.after(0, lambda f=file_paths: self.callback(f))
+            return 0
+
+        orig_proc = self._hooked_hwnds.get(hwnd)
+        if orig_proc:
+            return self._call_wndproc(orig_proc, hwnd, msg, wparam, lparam)
+        return self.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def hook_hwnd(self, hwnd):
+        if not hwnd or not self.user32:
+            return
+        # Guard against duplicate subclassing on tab switch or re-hook
+        if hwnd in self._hooked_hwnds:
+            return
+        try:
+            curr_proc = self._get_wndproc(hwnd, GWLP_WNDPROC)
+            if not curr_proc or curr_proc == self._wndproc_ptr:
+                return
+            self._hooked_hwnds[hwnd] = curr_proc
+            self._drag_accept_files(hwnd, True)
+            self._set_wndproc(hwnd, GWLP_WNDPROC, self._wndproc_ptr)
+        except Exception:
+            pass
+
+    def hook_all(self):
+        if not self.user32:
+            return
+        try:
+            self.root.update_idletasks()
+            client_hwnd = self.root.winfo_id()
+            parent_hwnd = self.user32.GetParent(client_hwnd) or client_hwnd
+            self.hook_hwnd(parent_hwnd)
+            self.hook_hwnd(client_hwnd)
+
+            enum_cb = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(
+                lambda h, l: (self.hook_hwnd(h), True)[1]
+            )
+            self.user32.EnumChildWindows(parent_hwnd, enum_cb, 0)
+        except Exception:
+            pass
+
+    def unhook_all(self):
+        if not self.user32:
+            return
+        for hwnd, orig_proc in list(self._hooked_hwnds.items()):
+            try:
+                self._drag_accept_files(hwnd, False)
+                self._set_wndproc(hwnd, GWLP_WNDPROC, orig_proc)
+            except Exception:
+                pass
+        self._hooked_hwnds.clear()
 
 
 
@@ -1186,7 +1451,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.0 • Web Portal</title>
+    <title>AirBeam v5.1 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1424,7 +1689,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.0</h1>
+        <h1><span>⚡</span> AirBeam v5.1</h1>
         <p>Ultra-Fast Wireless Transfer for PC, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -1920,10 +2185,18 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 self.send_header('Connection', 'close')
                 self.end_headers()
 
+                seen_counts: Dict[str, int] = {}
                 adapter = SocketStreamAdapter(self.wfile, record_cb=lambda n: self.app.record_ios_stream_bytes(n, is_upload=False))
                 with zipfile.ZipFile(adapter, mode='w', compression=zipfile.ZIP_STORED) as zf:
                     for fpath in selected:
-                        arcname = sanitize_ntfs_filename(os.path.basename(fpath))
+                        base_arc = sanitize_ntfs_filename(os.path.basename(fpath))
+                        if base_arc in seen_counts:
+                            seen_counts[base_arc] += 1
+                            stem, ext = os.path.splitext(base_arc)
+                            arcname = f"{stem} ({seen_counts[base_arc]}){ext}"
+                        else:
+                            seen_counts[base_arc] = 0
+                            arcname = base_arc
                         zf.write(fpath, arcname=arcname)
                 return
             except Exception:
@@ -1973,6 +2246,9 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                     if os.path.exists(final_path):
                         os.remove(final_path)
                     os.rename(part_path, final_path)
+
+                if hasattr(self.app, "on_ios_receive_complete"):
+                    self.app.after(0, lambda p=final_path: self.app.on_ios_receive_complete(p))
 
                 resp = json.dumps({"status": "ok", "filename": os.path.basename(final_path), "size": content_len}).encode('utf-8')
                 self.send_response(200)
@@ -2144,7 +2420,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.0 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.1 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -2735,7 +3011,7 @@ class ScrollableFrame(tk.Frame):
 class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
-        self.title("AirBeam v5.0 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title("AirBeam v5.1 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -2806,7 +3082,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.0')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.1')
         except Exception:
             pass
 
@@ -2838,6 +3114,10 @@ class AirBeamSenderApp(BaseTkApp):
         self.apk_path = self.locate_apk()
         self.local_ip = get_local_ip()
 
+        # Load user configuration preferences
+        cfg = self.load_airbeam_config()
+        self.auto_open_incoming_var = tk.BooleanVar(value=bool(cfg.get("auto_open_incoming_files", True)))
+
         if self.apk_path and os.path.exists(self.apk_path):
             self.apk_server = ApkServer(self.apk_path)
             self.apk_server.start()
@@ -2845,12 +3125,24 @@ class AirBeamSenderApp(BaseTkApp):
         self.setup_styles()
         self.setup_ui()
 
-        # Window-wide Drag-and-Drop Handler (native OLE IDropTarget via TkinterDnD)
+        # Window-wide Drag-and-Drop Handler (native OLE IDropTarget via TkinterDnD and Win32 fallback)
         if TKDND_AVAILABLE:
             self._last_tkdnd_drop_time = 0.0
             self.register_drop_target(self)
             if hasattr(self, "notebook"):
                 self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.after(50, lambda: self.register_drop_target(self)))
+        if NATIVE_DND_SUPPORTED:
+            self.drop_target = NativeWindowsDropTarget(self, self.on_global_files_dropped)
+            self.after(200, self.drop_target.hook_all)
+            if hasattr(self, "notebook"):
+                self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.after(50, self.drop_target.hook_all), add="+")
+
+        # Global Ctrl+V binding across the entire application
+        self.bind_all("<Control-v>", self.on_global_paste)
+        self.bind_all("<Control-V>", self.on_global_paste)
+
+        # Process command-line files/arguments on launch
+        self.after(350, self.process_cli_arguments)
 
         # Handle window close to disconnect from airbeam and restore previous Wi-Fi
         self.protocol("WM_DELETE_WINDOW", self.on_window_close)
@@ -2858,6 +3150,184 @@ class AirBeamSenderApp(BaseTkApp):
         # Start Coordinator and Wi-Fi link telemetry poller in background
         self.after(500, self.start_discovery_coordinator)
         self.after(800, self.update_wifi_telemetry_loop)
+
+    def load_airbeam_config(self) -> dict:
+        if os.path.exists(AIRBEAM_CONFIG_FILE):
+            try:
+                with open(AIRBEAM_CONFIG_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def save_airbeam_config(self, cfg: dict):
+        try:
+            curr = self.load_airbeam_config()
+            curr.update(cfg)
+            with open(AIRBEAM_CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(curr, f, indent=2)
+        except Exception:
+            pass
+
+    def on_toggle_auto_open_incoming(self):
+        val = self.auto_open_incoming_var.get()
+        self.save_airbeam_config({"auto_open_incoming_files": val})
+
+    def notify_incoming_file_arrived(self, dest_path: str):
+        if self.auto_open_incoming_var.get():
+            try:
+                if winsound:
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
+            try:
+                if os.path.exists(dest_path):
+                    norm = os.path.normpath(dest_path)
+                    subprocess.Popen(f'explorer.exe /select,"{norm}"')
+                else:
+                    folder = os.path.dirname(dest_path)
+                    if os.path.exists(folder):
+                        os.startfile(folder)
+            except Exception:
+                try:
+                    folder = os.path.dirname(dest_path)
+                    if os.path.exists(folder):
+                        os.startfile(folder)
+                except Exception:
+                    pass
+
+    def on_ios_receive_complete(self, dest_path: str):
+        self.update_ios_files_summary()
+        self.notify_incoming_file_arrived(dest_path)
+
+    def on_global_paste(self, event=None):
+        focused = self.focus_get()
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return None
+
+        # 1. Check for files copied to clipboard (CF_HDROP)
+        clip_files = get_windows_clipboard_files()
+        if clip_files:
+            self.on_global_files_dropped(clip_files)
+            return "break"
+
+        # 2. Check for copied text / link
+        text = self.get_clipboard_safe()
+        if text and text.strip():
+            cur_tab = 0
+            try:
+                if hasattr(self, "notebook"):
+                    cur_tab = self.notebook.index(self.notebook.select())
+            except Exception:
+                cur_tab = 0
+
+            if cur_tab == 2:
+                self.beam_clipboard_to_ios()
+            elif cur_tab == 1:
+                messagebox.showinfo("Clipboard Text", f"Windows Clipboard text:\n\n{text[:160]}...\n\n(To beam this text to Android or iPhone, switch to that tab).")
+            else:
+                self.beam_clipboard()
+            return "break"
+
+        return None
+
+    def process_cli_arguments(self):
+        if len(sys.argv) > 1:
+            raw_args = sys.argv[1:]
+            cli_paths = []
+            for arg in raw_args:
+                p = os.path.normpath(os.path.abspath(arg))
+                if os.path.exists(p):
+                    cli_paths.append(p)
+            if cli_paths:
+                self.on_global_files_dropped(cli_paths)
+
+    def update_context_menu_button_state(self):
+        if not hasattr(self, "btn_context_menu"):
+            return
+        if is_explorer_context_menu_registered():
+            self.btn_context_menu.config(
+                text="✓ In Windows Right-Click Menu (Click to Remove)",
+                bg="#065f46",
+                fg="#34d399"
+            )
+        else:
+            self.btn_context_menu.config(
+                text="⚡ Add to Windows Right-Click Menu",
+                bg="#1e293b",
+                fg="#f8fafc"
+            )
+
+    def toggle_explorer_context_menu(self):
+        if is_explorer_context_menu_registered():
+            if unregister_explorer_context_menu():
+                messagebox.showinfo("Right-Click Menu", "'Send with AirBeam' removed from Windows Explorer context menu.")
+            else:
+                messagebox.showerror("Error", "Failed to remove context menu entry.")
+        else:
+            if register_explorer_context_menu():
+                messagebox.showinfo("Right-Click Menu", "'Send with AirBeam' added to Windows Explorer right-click menu for all files and folders!\n\nYou can now right-click any file in Windows Explorer and choose 'Send with AirBeam'.")
+            else:
+                messagebox.showerror("Error", "Failed to register context menu entry.")
+        self.update_context_menu_button_state()
+
+    def remove_selected_file(self):
+        if getattr(self, "is_sending", False):
+            return
+        sel = []
+        target_lb = None
+        if hasattr(self, "notebook"):
+            try:
+                cur_tab = self.notebook.index(self.notebook.select())
+            except Exception:
+                cur_tab = 0
+        else:
+            cur_tab = 0
+
+        if cur_tab == 2 and hasattr(self, "listbox_ios_files") and self.listbox_ios_files.curselection():
+            target_lb = self.listbox_ios_files
+            sel = list(self.listbox_ios_files.curselection())
+        elif hasattr(self, "listbox_files") and self.listbox_files.curselection():
+            target_lb = self.listbox_files
+            sel = list(self.listbox_files.curselection())
+        elif hasattr(self, "listbox_ios_files") and self.listbox_ios_files.curselection():
+            target_lb = self.listbox_ios_files
+            sel = list(self.listbox_ios_files.curselection())
+
+        if not sel:
+            if self.selected_files:
+                self.selected_files.pop()
+        else:
+            for idx in sorted(sel, reverse=True):
+                if 0 <= idx < len(self.selected_files):
+                    self.selected_files.pop(idx)
+
+        self.refresh_file_list()
+        self.update_ios_files_summary()
+
+        if target_lb and target_lb.winfo_exists() and self.selected_files:
+            next_idx = min(sel[0], len(self.selected_files) - 1) if sel else 0
+            target_lb.selection_set(next_idx)
+            target_lb.activate(next_idx)
+
+    def remove_selected_pc_file(self):
+        if getattr(self, "is_pc_sending", False):
+            return
+        sel = list(self.listbox_pc_files.curselection()) if hasattr(self, "listbox_pc_files") else []
+        if not sel:
+            if self.pc_selected_files:
+                self.pc_selected_files.pop()
+        else:
+            for idx in sorted(sel, reverse=True):
+                if 0 <= idx < len(self.pc_selected_files):
+                    self.pc_selected_files.pop(idx)
+
+        self.update_pc_file_listbox()
+
+        if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists() and self.pc_selected_files:
+            next_idx = min(sel[0], len(self.pc_selected_files) - 1) if sel else 0
+            self.listbox_pc_files.selection_set(next_idx)
+            self.listbox_pc_files.activate(next_idx)
 
     def register_drop_target(self, widget):
         """Safely registers an OLE drop target on any Tk widget and its children recursively."""
@@ -2927,6 +3397,11 @@ class AirBeamSenderApp(BaseTkApp):
     def on_window_close(self):
         self._is_alive = False
         try:
+            if hasattr(self, "drop_target"):
+                self.drop_target.unhook_all()
+        except Exception:
+            pass
+        try:
             if hasattr(self, "pc_receiver"):
                 self.pc_receiver.stop()
         except Exception:
@@ -2954,6 +3429,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.1-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.1-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.0-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.0-Receiver.apk"),
                 os.path.join(r, "android-app", "app", "build", "outputs", "apk", "release", "AirBeam-v5.0-Receiver.apk"),
@@ -3265,8 +3742,40 @@ class AirBeamSenderApp(BaseTkApp):
         style.configure("TProgressbar", thickness=16, troughcolor="#334155", background="#2563eb")
 
     def setup_ui(self):
+        # Top Application Navigation & Integration Bar
+        top_bar = tk.Frame(self, bg="#0f172a")
+        top_bar.pack(fill="x", padx=16, pady=(10, 4))
+
+        lbl_app_brand = tk.Label(
+            top_bar,
+            text="⚡ AirBeam v5.1  |  Ultra-Speed Cross-Platform Wireless Transfer",
+            bg="#0f172a",
+            fg="#38bdf8",
+            font=("Segoe UI", 10, "bold")
+        )
+        lbl_app_brand.pack(side="left")
+
+        # Right-click Context Menu Toggle Button
+        self.btn_context_menu = tk.Button(
+            top_bar,
+            text="⚡ Add to Windows Right-Click Menu",
+            bg="#1e293b",
+            fg="#f8fafc",
+            activebackground="#334155",
+            activeforeground="#38bdf8",
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            command=self.toggle_explorer_context_menu
+        )
+        self.btn_context_menu.pack(side="right")
+        self.update_context_menu_button_state()
+
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill="both", expand=True, padx=16, pady=16)
+        self.notebook.pack(fill="both", expand=True, padx=16, pady=(4, 16))
 
         tab_send = tk.Frame(self.notebook, bg="#0f172a")
         tab_pc = tk.Frame(self.notebook, bg="#0f172a")
@@ -3412,6 +3921,9 @@ class AirBeamSenderApp(BaseTkApp):
         btn_add_folder = ttk.Button(top_file_bar, text="+ Add Folder", style="Secondary.TButton", command=self.add_folder)
         btn_add_folder.pack(side="right", padx=4)
 
+        btn_remove = ttk.Button(top_file_bar, text="➖ Remove", style="Secondary.TButton", command=self.remove_selected_file)
+        btn_remove.pack(side="right", padx=4)
+
         btn_clear = ttk.Button(top_file_bar, text="Clear", style="Secondary.TButton", command=self.clear_files)
         btn_clear.pack(side="right")
 
@@ -3435,6 +3947,9 @@ class AirBeamSenderApp(BaseTkApp):
         )
         self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
         scrollbar.config(command=self.listbox_files.yview)
+
+        self.listbox_files.bind("<Delete>", lambda e: (self.remove_selected_file(), "break")[1])
+        self.listbox_files.bind("<BackSpace>", lambda e: (self.remove_selected_file(), "break")[1])
 
         self.register_drop_target(files_card)
         self.register_drop_target(self.listbox_files)
@@ -3807,6 +4322,9 @@ class AirBeamSenderApp(BaseTkApp):
         btn_add_pc_folder = ttk.Button(top_send_bar, text="+ Add Folder", style="Secondary.TButton", command=self.add_pc_folder)
         btn_add_pc_folder.pack(side="right", padx=4)
 
+        btn_remove_pc = ttk.Button(top_send_bar, text="➖ Remove", style="Secondary.TButton", command=self.remove_selected_pc_file)
+        btn_remove_pc.pack(side="right", padx=4)
+
         btn_clear_pc_files = ttk.Button(top_send_bar, text="Clear", style="Secondary.TButton", command=self.clear_pc_files)
         btn_clear_pc_files.pack(side="right")
 
@@ -3824,6 +4342,9 @@ class AirBeamSenderApp(BaseTkApp):
         )
         self.listbox_pc_files.pack(fill="both", expand=True, padx=4, pady=4)
         pc_scrollbar.config(command=self.listbox_pc_files.yview)
+
+        self.listbox_pc_files.bind("<Delete>", lambda e: (self.remove_selected_pc_file(), "break")[1])
+        self.listbox_pc_files.bind("<BackSpace>", lambda e: (self.remove_selected_pc_file(), "break")[1])
 
         self.register_drop_target(send_card)
         self.register_drop_target(self.listbox_pc_files)
@@ -3867,7 +4388,19 @@ class AirBeamSenderApp(BaseTkApp):
         hist_top = tk.Frame(self.pc_history_card, bg="#1e293b")
         hist_top.pack(fill="x", pady=(0, 6))
         ttk.Label(hist_top, text="📥 Received PC Files History", style="CardHeader.TLabel").pack(side="left")
-        ttk.Label(hist_top, text="(Double-click any file to open/reveal)", style="CardBody.TLabel").pack(side="right")
+
+        chk_pc_auto_open = tk.Checkbutton(
+            hist_top,
+            text="☑ Auto-open folder when files arrive",
+            variable=self.auto_open_incoming_var,
+            command=self.on_toggle_auto_open_incoming,
+            bg="#1e293b", fg="#cbd5e1", selectcolor="#0f172a",
+            activebackground="#1e293b", activeforeground="#38bdf8",
+            font=("Segoe UI", 9)
+        )
+        chk_pc_auto_open.pack(side="right", padx=(6, 0))
+
+        ttk.Label(hist_top, text="(Double-click to open)", style="CardBody.TLabel").pack(side="right", padx=(0, 4))
 
         hist_list_frame = tk.Frame(self.pc_history_card, bg="#0f172a")
         hist_list_frame.pack(fill="x", expand=True)
@@ -4246,36 +4779,51 @@ class AirBeamSenderApp(BaseTkApp):
     def _on_pc_files_dropped(self, files):
         if not files:
             return
+        status_lbl = getattr(self, "lbl_pc_total_size", None)
         for f in files:
             path = f.decode('utf-8', errors='replace') if isinstance(f, bytes) else str(f)
-            path = os.path.abspath(path)
+            path = os.path.normpath(os.path.abspath(path))
             if os.path.isfile(path):
                 if path not in self.pc_selected_files:
                     self.pc_selected_files.append(path)
             elif os.path.isdir(path):
+                folder_name = os.path.basename(path)
+                if status_lbl and status_lbl.winfo_exists():
+                    status_lbl.config(text=f"📦 Packaging dropped folder '{folder_name}'...")
+                    self.update_idletasks()
                 for root, _, filenames in os.walk(path):
                     for fn in filenames:
-                        full = os.path.join(root, fn)
-                        if full not in self.pc_selected_files:
+                        full = os.path.normpath(os.path.join(root, fn))
+                        if os.path.isfile(full) and full not in self.pc_selected_files:
                             self.pc_selected_files.append(full)
         self.update_pc_file_listbox()
 
     def _on_main_files_dropped(self, files):
         if not files:
             return
+        status_lbl = getattr(self, "lbl_total_size", None)
+        status_ios = getattr(self, "lbl_ios_total_size", None)
         for f in files:
             path = f.decode('utf-8', errors='replace') if isinstance(f, bytes) else str(f)
-            path = os.path.abspath(path)
+            path = os.path.normpath(os.path.abspath(path))
             if os.path.isfile(path):
                 if path not in self.selected_files:
                     self.selected_files.append(path)
             elif os.path.isdir(path):
+                folder_name = os.path.basename(path)
+                msg = f"📦 Packaging dropped folder '{folder_name}'..."
+                if status_lbl and status_lbl.winfo_exists():
+                    status_lbl.config(text=msg)
+                if status_ios and status_ios.winfo_exists():
+                    status_ios.config(text=msg)
+                self.update_idletasks()
                 for root, _, filenames in os.walk(path):
                     for fn in filenames:
-                        full = os.path.join(root, fn)
-                        if full not in self.selected_files:
+                        full = os.path.normpath(os.path.join(root, fn))
+                        if os.path.isfile(full) and full not in self.selected_files:
                             self.selected_files.append(full)
         self.refresh_file_list()
+        self.update_ios_files_summary()
 
     def on_pc_receiver_ready(self, port, success, err=""):
         if hasattr(self, "lbl_pc_rx_badge"):
@@ -4310,6 +4858,7 @@ class AirBeamSenderApp(BaseTkApp):
             )
             self.lbl_pc_incoming_spd.config(text=f"⚡ Avg: {spd_str}")
             self.update_pc_received_summary()
+        self.notify_incoming_file_arrived(dest_path)
 
     def copy_pc_web_url(self):
         url = f"http://{self.local_ip}:{self.iphone_portal_port}/index.html"
@@ -4448,7 +4997,7 @@ class AirBeamSenderApp(BaseTkApp):
         container = ttk.Frame(scroll_frame.scrollable_window, style="Card.TFrame", padding=20)
         container.pack(fill="both", expand=True)
 
-        apk_filename = os.path.basename(self.apk_path) if self.apk_path else "AirBeam-v5.0-Receiver.apk"
+        apk_filename = os.path.basename(self.apk_path) if self.apk_path else ("AirBeam-v5.1-Receiver.apk" if os.path.exists(os.path.join(APP_ROOT, "AirBeam-v5.1-Receiver.apk")) else "AirBeam-v5.0-Receiver.apk")
         ttk.Label(container, text=f"Install {apk_filename} on Android", style="CardHeader.TLabel").pack(anchor="center")
         ttk.Label(container, text="Scan with your tablet camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
 
@@ -4462,7 +5011,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.generate_qr_code(apk_url)
 
         instructions = (
-            "AirBeam v5.0 Update Features:\n"
+            "AirBeam v5.1 Update Features:\n"
             "• Interactive Hotspot Toggle Switch: 1-click connect/disconnect with home Wi-Fi auto-restore.\n"
             "• Pipelined 6-Stream Turbo Engine: Zero stop-and-wait stalls with 8 MB socket buffer.\n"
             "• Precision Speedometer: Receiver-confirmed rolling window EMA & pause-aware timer.\n"
@@ -4502,7 +5051,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Header Info Card
         header_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         header_card.pack(fill="x", padx=10, pady=(6, 10))
-        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.0)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.1)", style="CardHeader.TLabel").pack(anchor="w")
         ttk.Label(header_card, text="Zero app installation required on iOS! Use Option 1 below for instant transfer over Home Wi-Fi, or Options 2 & 3 for direct router-bypass speeds (50–95+ MB/s).", style="CardBody.TLabel").pack(anchor="w", pady=(2, 0))
 
         # --- OPTION 1: Transfer Over Home Wi-Fi Router (Zero Hotspot Required) ---
@@ -4683,6 +5232,9 @@ class AirBeamSenderApp(BaseTkApp):
         btn_ios_clear = ttk.Button(top_ios_bar, text="Clear", style="Secondary.TButton", command=self.clear_ios_staged_files)
         btn_ios_clear.pack(side="right")
 
+        btn_ios_remove = ttk.Button(top_ios_bar, text="➖ Remove", style="Secondary.TButton", command=self.remove_selected_file)
+        btn_ios_remove.pack(side="right", padx=4)
+
         btn_ios_add_folder = ttk.Button(top_ios_bar, text="+ Add Folder", style="Secondary.TButton", command=self.add_folder)
         btn_ios_add_folder.pack(side="right", padx=4)
 
@@ -4713,6 +5265,9 @@ class AirBeamSenderApp(BaseTkApp):
         self.listbox_ios_files.pack(fill="both", expand=True, padx=4, pady=4)
         ios_scrollbar.config(command=self.listbox_ios_files.yview)
 
+        self.listbox_ios_files.bind("<Delete>", lambda e: (self.remove_selected_file(), "break")[1])
+        self.listbox_ios_files.bind("<BackSpace>", lambda e: (self.remove_selected_file(), "break")[1])
+
         self.register_drop_target(ios_files_card)
         self.register_drop_target(self.listbox_ios_files)
 
@@ -4742,6 +5297,17 @@ class AirBeamSenderApp(BaseTkApp):
 
         btn_ref_qr = ttk.Button(btn_bar, text="🔄 Refresh QR", style="Secondary.TButton", command=self.refresh_ios_qr_codes)
         btn_ref_qr.pack(side="left")
+
+        chk_ios_auto_open = tk.Checkbutton(
+            btn_bar,
+            text="☑ Auto-open folder when files arrive",
+            variable=self.auto_open_incoming_var,
+            command=self.on_toggle_auto_open_incoming,
+            bg="#1e293b", fg="#cbd5e1", selectcolor="#0f172a",
+            activebackground="#1e293b", activeforeground="#38bdf8",
+            font=("Segoe UI", 9)
+        )
+        chk_ios_auto_open.pack(side="right", padx=(6, 0))
 
         # Live file counts summary
         self.lbl_ios_files_summary = tk.Label(
@@ -5181,7 +5747,7 @@ class AirBeamSenderApp(BaseTkApp):
                 except Exception as e:
                     messagebox.showerror("Firewall Error", f"Failed to run Fix-AirBeam-Firewall.bat: {e}")
         else:
-            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.0 folder.")
+            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.1 folder.")
 
     def toggle_connect_to_iphone_hotspot(self, target_state):
         if target_state:
@@ -6101,7 +6667,7 @@ class AirBeamSenderApp(BaseTkApp):
             "parallel_streams": PARALLEL_STREAMS,
             "stripe_size_mb": DEFAULT_STRIPE_SIZE // (1024 * 1024),
             "chunk_slice_kb": CHUNK_SLICE_BYTES // 1024,
-            "status": "AirBeam v5.0 Ultra-Speed Multi-Stream Ready",
+            "status": "AirBeam v5.1 Ultra-Speed Multi-Stream Ready",
             "diagnostics": {
                 "router_bypassed": is_direct_hotspot,
                 "connection_mode_description": mode_desc,

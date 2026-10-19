@@ -1009,3 +1009,51 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Repackaged portable ZIP (`setup-output/AirBeam-v5.0-Portable.zip`).
    - Updated `README.md` download tables, badges, and repository tree.
    - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
+
+---
+
+## 31. AirBeam v5.1 — Edge-Case Bug Fixes & Ease-of-Use Upgrades
+
+### User Prompt:
+> *"Upgrade AirBeam in C:\Users\youssef\WirelessFileTransfer-v3.0 from v5.0 to v5.1 by fixing 3 edge-case bugs from the v5.0 drag-and-drop / ZIP update and adding 4 ease-of-use features. (Keep C:\Users\youssef\WirelessFileTransfer v2.7 100% untouched, and do NOT rebuild the Inno Setup installer unless explicitly asked)"*
+
+### Detailed Technical Solutions & Deliverables:
+
+1. **Fix Dropped Folder Crash (`PermissionError: [Errno 13]`)**:
+   - **Root Cause**: Dropping a directory onto the window passed the folder's raw path directly into `selected_files` or `pc_selected_files`. When the streaming engine called `open(filepath, "rb")` on that directory path, Python raised `PermissionError: [Errno 13] Permission denied`.
+   - **Solution**: In `on_global_files_dropped()`, `_on_pc_files_dropped()`, and `_on_main_files_dropped()`, every path is verified with `os.path.isdir()`. If a folder is dropped, AirBeam updates the UI with a live status message (`📦 Packaging dropped folder '<name>'...`), recursively traverses the directory tree, and stages all child files into the active queue. Directory paths are never appended directly, and duplicate file entries are strictly prevented.
+
+2. **Guard `NativeWindowsDropTarget` Against Duplicate WndProc Subclassing**:
+   - **Root Cause**: Re-running `EnumChildWindows` and `SetWindowLongPtrW(hwnd, GWL_WNDPROC, ...)` on `<<NotebookTabChanged>>` overwrote `orig_wndproc` with the already-subclassed callback pointer, causing infinite recursion (`0xC00000FD` stack overflow).
+   - **Solution**: Defined `NativeWindowsDropTarget` with an explicit `self._hooked_hwnds: Dict[int, int]` registry mapping `hwnd -> original_wndproc`. Skips any HWND already present in `_hooked_hwnds` and verifies `GetWindowLongPtrW(hwnd, GWL_WNDPROC) != self._wndproc_ptr`. Retains a strong instance reference to `self._wndproc_cb = WNDPROC_PROTO(...)` to prevent Python's garbage collector from freeing the native function pointer. Provides graceful unhooking on window close.
+
+3. **Deduplicate Filenames in `GET /download-all.zip`**:
+   - **Root Cause**: When staging multiple files with identical basenames from different folders (e.g. `A\photo.jpg` and `B\photo.jpg`), the ZIP stream wrote conflicting archive entry names, causing iOS Files app to overwrite earlier files during extraction.
+   - **Solution**: Added collision tracking in `IPhonePortalHandler.do_GET('/download-all.zip')` via `seen_counts: Dict[str, int]`. Clashing filenames are automatically renamed sequentially as `photo (1).jpg`, `photo (2).jpg`, ensuring zero file loss.
+
+4. **Ease-of-Use Upgrade #1: Single File Removal & Key Bindings**:
+   - Bound `<Delete>` and `<BackSpace>` keys to `listbox_files` (Tab 1), `listbox_pc_files` (Tab 2), and `listbox_ios_files` (Tab 3).
+   - Added `[ ➖ Remove ]` buttons next to `Clear` across all three tabs.
+   - Allows users to remove highlighted files or the last item in the queue without clearing the entire file list.
+
+5. **Ease-of-Use Upgrade #2: Global Ctrl+V Clipboard & Copied Files Paste**:
+   - Bound `<Control-v>` globally across the main window.
+   - Automatically detects copied Explorer files via Win32 `CF_HDROP` clipboard format and stages them into the active tab queue (identical to drag-and-drop).
+   - If copied content is text or a URL, beams or presents clipboard text seamlessly while preserving native text editing inside Entry/Text widgets.
+
+6. **Ease-of-Use Upgrade #3: Windows Explorer Right-Click "⚡ Send with AirBeam" Integration**:
+   - Implemented command-line argument processing (`sys.argv[1:]`) on launch to automatically queue files or folders passed via CLI.
+   - Added `[ ⚡ Add to Windows Right-Click Menu ]` toggle button in the new top navigation bar.
+   - Registers user-level context menus under `HKCU\Software\Classes\*\shell\AirBeam` and `HKCU\Software\Classes\Directory\shell\AirBeam` (zero Admin rights required).
+   - Updated launcher batch scripts (`Launch-AirBeam.bat` and `Launch-AirBeam-v5.1.bat`) to forward `%*` arguments to `sender.py`.
+
+7. **Ease-of-Use Upgrade #4: Persistent Auto-Open Folder & Completion Audio Chime**:
+   - Added persistent checkbox `[☑ Auto-open folder when files arrive]` on Tab 2 (PC to PC) and Tab 3 (iPhone / iOS).
+   - Setting is saved and restored from `airbeam_config.json`.
+   - When enabled, completing an incoming transfer plays a subtle Windows completion chime (`winsound.MessageBeep`) and opens/highlights the received file in Windows Explorer via `explorer.exe /select,"<dest_path>"`.
+
+8. **Version Bump to v5.1 & Release Delivery**:
+   - Version incremented to **v5.1** across `sender.py`, window title, Web Portal header, AppUserModelID, launcher scripts, shortcuts, and documentation.
+   - Created `Launch-AirBeam-v5.1.bat` and generated Desktop shortcut `AirBeam v5.1.lnk`.
+   - Verified zero syntax errors via `python -m py_compile desktop-sender/sender.py`.
+   - Strictly preserved `C:\Users\youssef\WirelessFileTransfer` (v2.7) 100% untouched.

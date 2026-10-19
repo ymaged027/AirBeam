@@ -26,5 +26,5 @@ if exist "%LOCALAPPDATA%\Python\pythoncore-3.14-64\pythonw.exe" (
     )
 )
 
-start "" "%PY_EXE%" "%~dp0desktop-sender\sender.py"
+start "" "%PY_EXE%" "%~dp0desktop-sender\sender.py" %*
 exit
