@@ -49,14 +49,17 @@ namespace AirBeamLauncher
                         }
                     }
 
+                    bool isPythonW = pythonExe.EndsWith("pythonw.exe", StringComparison.OrdinalIgnoreCase) ||
+                                     pythonExe.EndsWith("pyw.exe", StringComparison.OrdinalIgnoreCase);
+
                     ProcessStartInfo psi = new ProcessStartInfo
                     {
                         FileName = pythonExe,
                         Arguments = argBuilder.ToString(),
                         WorkingDirectory = appDir,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WindowStyle = ProcessWindowStyle.Hidden
+                        UseShellExecute = isPythonW,
+                        CreateNoWindow = !isPythonW,
+                        WindowStyle = ProcessWindowStyle.Normal
                     };
 
                     Process.Start(psi);
