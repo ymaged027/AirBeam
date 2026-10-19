@@ -107,160 +107,21 @@ from PIL import Image, ImageTk
 import qrcode
 
 # ==============================================================================
-# NATIVE 64-BIT / 32-BIT WINDOWS DRAG-AND-DROP ENGINE (REPLACES BROKEN WINDND)
+# NATIVE OLE DRAG-AND-DROP ENGINE (TKINTERDND2)
 # ==============================================================================
-GWLP_WNDPROC = -4
-WM_DROPFILES = 0x0233
-WM_DESTROY = 0x0002
-
 try:
-    import ctypes
-    from ctypes import wintypes
-    WNDPROC_PROTO = ctypes.WINFUNCTYPE(
-        ctypes.c_ssize_t,
-        wintypes.HWND,
-        wintypes.UINT,
-        wintypes.WPARAM,
-        wintypes.LPARAM
-    )
-    NATIVE_DND_SUPPORTED = True
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    TKDND_AVAILABLE = True
 except Exception:
-    NATIVE_DND_SUPPORTED = False
+    TKDND_AVAILABLE = False
 
-class NativeWindowsDropTarget:
-    """
-    Subclasses top-level and client Win32 HWNDs with explicit 64-bit ctypes prototypes
-    to intercept WM_DROPFILES across the ENTIRE application window (not just a box).
-    Completely avoids 32-bit truncation crashes (0xC0000005) inherent to third-party windnd.
-    """
-    def __init__(self, root, callback):
-        self.root = root
-        self.callback = callback
-        self.hooks = {}  # hwnd: (wndproc_func_instance, old_wndproc_ptr)
-        self.user32 = getattr(ctypes.windll, "user32", None) if NATIVE_DND_SUPPORTED else None
-        self.shell32 = getattr(ctypes.windll, "shell32", None) if NATIVE_DND_SUPPORTED else None
-        self._last_drop_time = 0.0
+if TKDND_AVAILABLE:
+    class BaseTkApp(TkinterDnD.Tk):
+        pass
+else:
+    class BaseTkApp(tk.Tk):
+        pass
 
-        if not self.user32 or not self.shell32:
-            return
-
-        # Explicit 64-bit / 32-bit function prototypes
-        if hasattr(self.user32, "SetWindowLongPtrW"):
-            self._set_wndproc = self.user32.SetWindowLongPtrW
-            self._set_wndproc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
-            self._set_wndproc.restype = ctypes.c_ssize_t
-
-            self._get_wndproc = self.user32.GetWindowLongPtrW
-            self._get_wndproc.argtypes = [wintypes.HWND, ctypes.c_int]
-            self._get_wndproc.restype = ctypes.c_ssize_t
-        else:
-            self._set_wndproc = self.user32.SetWindowLongW
-            self._set_wndproc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
-            self._set_wndproc.restype = ctypes.c_long
-
-            self._get_wndproc = self.user32.GetWindowLongW
-            self._get_wndproc.argtypes = [wintypes.HWND, ctypes.c_int]
-            self._get_wndproc.restype = ctypes.c_long
-
-        self._call_wndproc = self.user32.CallWindowProcW
-        self._call_wndproc.argtypes = [
-            ctypes.c_ssize_t,
-            wintypes.HWND,
-            wintypes.UINT,
-            wintypes.WPARAM,
-            wintypes.LPARAM
-        ]
-        self._call_wndproc.restype = ctypes.c_ssize_t
-
-        self._drag_accept_files = self.shell32.DragAcceptFiles
-        self._drag_accept_files.argtypes = [wintypes.HWND, wintypes.BOOL]
-        self._drag_accept_files.restype = None
-
-        self._drag_query_file = self.shell32.DragQueryFileW
-        self._drag_query_file.argtypes = [
-            wintypes.WPARAM,
-            wintypes.UINT,
-            wintypes.LPWSTR,
-            wintypes.UINT
-        ]
-        self._drag_query_file.restype = wintypes.UINT
-
-        self._drag_finish = self.shell32.DragFinish
-        self._drag_finish.argtypes = [wintypes.WPARAM]
-        self._drag_finish.restype = None
-
-    def _make_wndproc(self, old_proc):
-        def _wnd_proc(hwnd, msg, wparam, lparam):
-            if msg == WM_DROPFILES:
-                h_drop = wparam
-                file_paths = []
-                try:
-                    count = self._drag_query_file(h_drop, 0xFFFFFFFF, None, 0)
-                    for i in range(count):
-                        buf_len = self._drag_query_file(h_drop, i, None, 0)
-                        buf = ctypes.create_unicode_buffer(buf_len + 1)
-                        self._drag_query_file(h_drop, i, buf, buf_len + 1)
-                        file_paths.append(buf.value)
-                except Exception as e:
-                    print(f"Error querying dropped files: {e}")
-                finally:
-                    try:
-                        self._drag_finish(h_drop)
-                    except Exception:
-                        pass
-
-                now = time.time()
-                if file_paths and (now - self._last_drop_time) > 0.15:
-                    self._last_drop_time = now
-                    if self.callback:
-                        self.root.after(0, lambda f=file_paths: self.callback(f))
-                return 0
-
-            return self._call_wndproc(old_proc, hwnd, msg, wparam, lparam)
-
-        return WNDPROC_PROTO(_wnd_proc)
-
-    def hook_hwnd(self, hwnd):
-        if not hwnd or hwnd in self.hooks or not self.user32:
-            return
-        try:
-            old_proc = self._get_wndproc(hwnd, GWLP_WNDPROC)
-            if not old_proc:
-                return
-            new_proc = self._make_wndproc(old_proc)
-            self.hooks[hwnd] = (new_proc, old_proc)
-            self._drag_accept_files(hwnd, True)
-            self._set_wndproc(hwnd, GWLP_WNDPROC, ctypes.cast(new_proc, ctypes.c_void_p).value)
-        except Exception:
-            pass
-
-    def hook_all(self):
-        if not self.user32:
-            return
-        try:
-            self.root.update_idletasks()
-            client_hwnd = self.root.winfo_id()
-            parent_hwnd = self.user32.GetParent(client_hwnd) or client_hwnd
-            self.hook_hwnd(parent_hwnd)
-            self.hook_hwnd(client_hwnd)
-
-            enum_cb = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(
-                lambda h, l: (self.hook_hwnd(h), True)[1]
-            )
-            self.user32.EnumChildWindows(parent_hwnd, enum_cb, 0)
-        except Exception:
-            pass
-
-    def unhook_all(self):
-        if not self.user32:
-            return
-        for hwnd, (new_proc, old_proc) in list(self.hooks.items()):
-            try:
-                self._drag_accept_files(hwnd, False)
-                self._set_wndproc(hwnd, GWLP_WNDPROC, old_proc)
-            except Exception:
-                pass
-        self.hooks.clear()
 
 
 SESSION_NODE_ID = uuid.uuid4().hex[:8]
@@ -2227,8 +2088,11 @@ class PCReceiverServer:
             self.server_sock.bind(("0.0.0.0", self.port))
             self.server_sock.listen(32)
             print(f"PCReceiverServer active and listening on port {self.port}")
-            if hasattr(self.app_instance, "on_pc_receiver_ready"):
-                self.app_instance.after(0, lambda: self.app_instance.on_pc_receiver_ready(self.port, True))
+            if hasattr(self.app_instance, "on_pc_receiver_ready") and getattr(self.app_instance, "_is_alive", True):
+                try:
+                    self.app_instance.after(0, lambda: self.app_instance.on_pc_receiver_ready(self.port, True))
+                except Exception:
+                    pass
 
             while self.running:
                 try:
@@ -2244,9 +2108,13 @@ class PCReceiverServer:
                         print(f"PCReceiverServer accept error: {ex}")
                     break
         except Exception as e:
-            print(f"PCReceiverServer bind error on port {self.port}: {e}")
-            if hasattr(self.app_instance, "on_pc_receiver_ready"):
-                self.app_instance.after(0, lambda: self.app_instance.on_pc_receiver_ready(self.port, False, str(e)))
+            err_msg = str(e)
+            print(f"PCReceiverServer bind error on port {self.port}: {err_msg}")
+            if hasattr(self.app_instance, "on_pc_receiver_ready") and getattr(self.app_instance, "_is_alive", True):
+                try:
+                    self.app_instance.after(0, lambda err=err_msg: self.app_instance.on_pc_receiver_ready(self.port, False, err))
+                except Exception:
+                    pass
 
     def _read_exact(self, sock, count):
         buf = bytearray(count)
@@ -2864,7 +2732,7 @@ class ScrollableFrame(tk.Frame):
 
 
 # --- GUI Application ---
-class AirBeamSenderApp(tk.Tk):
+class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
         self.title("AirBeam v5.0 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
@@ -2872,6 +2740,7 @@ class AirBeamSenderApp(tk.Tk):
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
 
+        self._is_alive = True
         self.session_node_id = SESSION_NODE_ID
         self.selected_files = []
         self.is_sending = False
@@ -2976,11 +2845,12 @@ class AirBeamSenderApp(tk.Tk):
         self.setup_styles()
         self.setup_ui()
 
-        # Window-wide Drag-and-Drop Handler (catches drops anywhere in the entire window)
-        self.drop_target = NativeWindowsDropTarget(self, self.on_global_files_dropped)
-        self.after(200, self.drop_target.hook_all)
-        if hasattr(self, "notebook"):
-            self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.after(50, self.drop_target.hook_all))
+        # Window-wide Drag-and-Drop Handler (native OLE IDropTarget via TkinterDnD)
+        if TKDND_AVAILABLE:
+            self._last_tkdnd_drop_time = 0.0
+            self.register_drop_target(self)
+            if hasattr(self, "notebook"):
+                self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.after(50, lambda: self.register_drop_target(self)))
 
         # Handle window close to disconnect from airbeam and restore previous Wi-Fi
         self.protocol("WM_DELETE_WINDOW", self.on_window_close)
@@ -2988,6 +2858,50 @@ class AirBeamSenderApp(tk.Tk):
         # Start Coordinator and Wi-Fi link telemetry poller in background
         self.after(500, self.start_discovery_coordinator)
         self.after(800, self.update_wifi_telemetry_loop)
+
+    def register_drop_target(self, widget):
+        """Safely registers an OLE drop target on any Tk widget and its children recursively."""
+        if not TKDND_AVAILABLE or not widget:
+            return
+        try:
+            if hasattr(widget, "drop_target_register"):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_tkdnd_drop)
+        except Exception:
+            pass
+        try:
+            for child in widget.winfo_children():
+                self.register_drop_target(child)
+        except Exception:
+            pass
+
+    def _on_tkdnd_drop(self, event):
+        """Native OLE Drop callback; parses files cleanly and dispatches to on_global_files_dropped."""
+        now = time.time()
+        if hasattr(self, "_last_tkdnd_drop_time") and (now - self._last_tkdnd_drop_time) < 0.25:
+            return "break"
+        self._last_tkdnd_drop_time = now
+
+        raw = getattr(event, "data", "")
+        if not raw:
+            return "break"
+        files = []
+        try:
+            clean_raw = raw.replace('\\', '/')
+            items = list(self.tk.splitlist(clean_raw))
+            files = [os.path.normpath(it.strip('{}')) for it in items if it]
+        except Exception:
+            pass
+        if not files:
+            import re
+            matches = re.findall(r'\{([^}]+)\}|(\S+)', raw)
+            for m1, m2 in matches:
+                p = (m1 or m2).strip()
+                if p:
+                    files.append(os.path.normpath(p))
+        if files:
+            self.on_global_files_dropped(files)
+        return "break"
 
     def get_best_home_wifi_profile(self) -> Optional[str]:
         return get_best_home_wifi_profile(app_instance=self)
@@ -3011,11 +2925,7 @@ class AirBeamSenderApp(tk.Tk):
             self._on_main_files_dropped(files)
 
     def on_window_close(self):
-        try:
-            if hasattr(self, "drop_target"):
-                self.drop_target.unhook_all()
-        except Exception:
-            pass
+        self._is_alive = False
         try:
             if hasattr(self, "pc_receiver"):
                 self.pc_receiver.stop()
@@ -3029,7 +2939,10 @@ class AirBeamSenderApp(tk.Tk):
             cleanup_airbeam_wifi_on_exit(app_instance=self)
         except Exception:
             pass
-        self.destroy()
+        try:
+            self.destroy()
+        except Exception:
+            pass
 
     def locate_apk(self):
         roots = [
@@ -3360,6 +3273,11 @@ class AirBeamSenderApp(tk.Tk):
         self.notebook.add(tab_ios, text="  📱 iPhone / iOS (50-95+ MB/s)  ")
         self.notebook.add(tab_apk, text="  📥 Install Android APK  ")
 
+        self.register_drop_target(self.notebook)
+        self.register_drop_target(tab_send)
+        self.register_drop_target(tab_pc)
+        self.register_drop_target(tab_ios)
+
         self.build_send_tab(tab_send)
         self.build_pc_tab(tab_pc)
         self.build_ios_tab(tab_ios)
@@ -3512,6 +3430,9 @@ class AirBeamSenderApp(tk.Tk):
         )
         self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
         scrollbar.config(command=self.listbox_files.yview)
+
+        self.register_drop_target(files_card)
+        self.register_drop_target(self.listbox_files)
 
         self.lbl_total_size = tk.Label(
             files_card,
@@ -3898,6 +3819,9 @@ class AirBeamSenderApp(tk.Tk):
         )
         self.listbox_pc_files.pack(fill="both", expand=True, padx=4, pady=4)
         pc_scrollbar.config(command=self.listbox_pc_files.yview)
+
+        self.register_drop_target(send_card)
+        self.register_drop_target(self.listbox_pc_files)
 
         self.lbl_pc_total_size = tk.Label(
             send_card,
@@ -4784,6 +4708,9 @@ class AirBeamSenderApp(tk.Tk):
         self.listbox_ios_files.pack(fill="both", expand=True, padx=4, pady=4)
         ios_scrollbar.config(command=self.listbox_ios_files.yview)
 
+        self.register_drop_target(ios_files_card)
+        self.register_drop_target(self.listbox_ios_files)
+
         self.lbl_ios_total_size = tk.Label(
             ios_files_card,
             text="0 files selected (0 B) — Drag & drop files anywhere in window or click '+ Add Files' above",
@@ -5644,10 +5571,14 @@ class AirBeamSenderApp(tk.Tk):
             except Exception as e:
                 print(f"UDP discovery coordinator socket bind warning: {e}")
 
-            while True:
+            while getattr(self, "_is_alive", True):
                 now = time.time()
                 # 1. Fallback / Resend timers (ONLY in LAPTOP_HOTSPOT mode!)
-                if not self.is_sending and self.connection_mode.get() == "LAPTOP_HOTSPOT":
+                try:
+                    mode = self.connection_mode.get()
+                except Exception:
+                    break
+                if not self.is_sending and mode == "LAPTOP_HOTSPOT":
                     if self.hotspot_state == "WAITING_5GHZ" and (now - self.handover_sent_time) >= 10.0:
                         print("5 GHz handover timed out (10s) with no connection. Auto-falling back to 2.4 GHz hotspot...")
                         self.after(0, self.switch_to_24ghz_hotspot)
