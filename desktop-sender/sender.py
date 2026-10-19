@@ -2956,6 +2956,7 @@ class AirBeamSenderApp(BaseTkApp):
             candidates.extend([
                 os.path.join(r, "release", "AirBeam-v2.7-Receiver.apk"),
                 os.path.join(r, "AirBeam-v2.7-Receiver.apk"),
+                os.path.join(r, "android-app", "app", "build", "outputs", "apk", "release", "AirBeam-v2.7-Receiver.apk"),
                 os.path.join(r, "android-app", "app", "build", "outputs", "apk", "debug", "AirBeam-v2.7-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v2.6-Receiver.apk"),
                 os.path.join(r, "AirBeam-v2.6-Receiver.apk"),
@@ -4443,7 +4444,7 @@ class AirBeamSenderApp(BaseTkApp):
         container = ttk.Frame(scroll_frame.scrollable_window, style="Card.TFrame", padding=20)
         container.pack(fill="both", expand=True)
 
-        apk_filename = os.path.basename(self.apk_path) if self.apk_path else "AirBeam-v2.3-Receiver.apk"
+        apk_filename = os.path.basename(self.apk_path) if self.apk_path else "AirBeam-v2.7-Receiver.apk"
         ttk.Label(container, text=f"Install {apk_filename} on Android", style="CardHeader.TLabel").pack(anchor="center")
         ttk.Label(container, text="Scan with your tablet camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
 
@@ -5157,11 +5158,13 @@ class AirBeamSenderApp(BaseTkApp):
             self.after(2000, lambda: self.btn_ref_opt3.config(text="🔄 Refresh IP / QR", fg="#38bdf8"))
 
     def launch_firewall_fix(self):
-        bat = os.path.join(APP_ROOT, "Fix-AirBeam-Firewall.bat")
-        if not os.path.exists(bat):
-            alt_bat = os.path.join(os.path.dirname(APP_ROOT), "Fix-AirBeam-Firewall.bat")
-            if os.path.exists(alt_bat):
-                bat = alt_bat
+        bat_candidates = [
+            os.path.join(APP_ROOT, "Fix-AirBeam-Firewall.bat"),
+            os.path.join(BUNDLE_DIR, "Fix-AirBeam-Firewall.bat"),
+            os.path.join(os.path.dirname(APP_ROOT), "Fix-AirBeam-Firewall.bat"),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Fix-AirBeam-Firewall.bat")),
+        ]
+        bat = next((b for b in bat_candidates if os.path.exists(b)), None)
         if os.path.exists(bat):
             try:
                 import ctypes

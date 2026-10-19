@@ -1,6 +1,10 @@
 $sourceDir = "C:\Users\youssef\WirelessFileTransfer-v3.0\dist\AirBeam"
 $zipPath = "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output\AirBeam-v5.0-Portable.zip"
 
+if (Test-Path "C:\Users\youssef\WirelessFileTransfer-v3.0\Fix-AirBeam-Firewall.bat") {
+    Copy-Item "C:\Users\youssef\WirelessFileTransfer-v3.0\Fix-AirBeam-Firewall.bat" "$sourceDir\Fix-AirBeam-Firewall.bat" -Force
+}
+
 if (-not (Test-Path "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output")) {
     New-Item -ItemType Directory -Path "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output" -Force | Out-Null
 }

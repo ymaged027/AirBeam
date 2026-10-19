@@ -23,6 +23,8 @@ netsh advfirewall firewall delete rule name="AirBeam APK Server" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam UDP Discovery" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam Pythonw Runtime" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam Python Runtime" >nul 2>&1
+netsh advfirewall firewall delete rule name="AirBeam Executable" >nul 2>&1
+netsh advfirewall firewall delete rule name="AirBeam Installed App" >nul 2>&1
 
 echo Adding inbound allow rules for all network profiles (Private, Public, Domain)...
 netsh advfirewall firewall add rule name="AirBeam iOS Web Portal" dir=in action=allow protocol=TCP localport=8090 profile=any
@@ -38,6 +40,12 @@ if exist "%PYW%" (
 set "PY=%LOCALAPPDATA%\Python\pythoncore-3.14-64\python.exe"
 if exist "%PY%" (
     netsh advfirewall firewall add rule name="AirBeam Python Runtime" dir=in action=allow program="%PY%" profile=any
+)
+if exist "%~dp0AirBeam.exe" (
+    netsh advfirewall firewall add rule name="AirBeam Executable" dir=in action=allow program="%~dp0AirBeam.exe" profile=any
+)
+if exist "%LOCALAPPDATA%\Programs\AirBeam\AirBeam.exe" (
+    netsh advfirewall firewall add rule name="AirBeam Installed App" dir=in action=allow program="%LOCALAPPDATA%\Programs\AirBeam\AirBeam.exe" profile=any
 )
 
 echo.

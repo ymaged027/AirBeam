@@ -969,15 +969,19 @@ User requested: *"it works fine now make me a setup for the app so i can share i
 
 3. **Inno Setup 6 Production Installer (`AirBeam-Setup.iss`):**
    - Updated application version macros to `5.0` (`#define MyAppVersion "5.0"`) and output filename to `AirBeam-v5.0-Setup`.
-   - Successfully compiled with `ISCC.exe` into `setup-output\AirBeam-v5.0-Setup.exe` (28.9 MB, LZMA2/ultra64 compression).
-   - Configures automatic user-level installation to `{localappdata}\Programs\AirBeam` (no UAC required), Start Menu & Desktop shortcuts, and firewall rules for ports 8090, 8080, 7777, 8888 (TCP) and 7778 (UDP).
+   - Successfully compiled with `ISCC.exe` into `setup-output\AirBeam-v5.0-Setup.exe` (31.0 MB, LZMA2/ultra64 compression).
+   - Bundles `Fix-AirBeam-Firewall.bat` in app directory, creates Start Menu & Desktop shortcuts, and configures user-level installation.
 
 4. **Portable Standalone Distribution Archive (`create_portable_zip.ps1`):**
    - Updated PowerShell script target to `setup-output\AirBeam-v5.0-Portable.zip`.
-   - Generated `AirBeam-v5.0-Portable.zip` (38.1 MB, optimal compression) containing full standalone AirBeam distribution.
-   - Removed superseded v4.8 binaries from `setup-output/` to keep repository lean.
+   - Generated `AirBeam-v5.0-Portable.zip` (43.6 MB, optimal compression) containing full standalone AirBeam distribution including root `Fix-AirBeam-Firewall.bat` and `AirBeam-v2.7-Receiver.apk`.
 
-5. **Documentation & Release Tracking (`README.md`):**
-   - Updated release badges, download tables, and repository trees to reference `AirBeam-v5.0-Setup.exe` and `AirBeam-v5.0-Portable.zip`.
+5. **Firewall & Runtime Path Robustness Fixes (`sender.py` & `Fix-AirBeam-Firewall.bat`):**
+   - Fixed `launch_firewall_fix()` in `sender.py` to inspect `BUNDLE_DIR` (`_internal\`) and root paths so the firewall configurator executes seamlessly from standalone and installed distributions.
+   - Enhanced `locate_apk()` to scan `apk/release/` output and updated fallback name to `AirBeam-v2.7-Receiver.apk`.
+   - Added `AirBeam Executable` and `AirBeam Installed App` program rules to `Fix-AirBeam-Firewall.bat`.
+
+6. **Documentation & Release Tracking (`README.md`):**
+   - Updated release badges, download tables, and repository trees to reference `AirBeam-v5.0-Setup.exe` (31.0 MB) and `AirBeam-v5.0-Portable.zip` (43.6 MB).
    - Updated APK download size to 4.7 MB.
    - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
