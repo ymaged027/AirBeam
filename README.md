@@ -171,7 +171,6 @@ AirBeam/
 ├── desktop-sender/
 │   ├── sender.py                      # Core Python GUI & Multi-Stream Engine
 │   ├── AirBeamLauncher.cs             # Native Windows C# launcher source
-│   ├── Fix-AirBeam-Firewall.bat       # Sub-module firewall helper
 │   └── assets/                        # High-resolution icons and logos
 ├── android-app/                       # Native Android Receiver project (Java NIO)
 ├── release/
