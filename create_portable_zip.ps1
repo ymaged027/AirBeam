@@ -1,5 +1,5 @@
 $sourceDir = "C:\Users\youssef\WirelessFileTransfer-v3.0\dist\AirBeam"
-$zipPath = "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output\AirBeam-v3.9-Portable.zip"
+$zipPath = "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output\AirBeam-v4.7-Portable.zip"
 
 if (-not (Test-Path "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output")) {
     New-Item -ItemType Directory -Path "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output" -Force | Out-Null

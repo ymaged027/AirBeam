@@ -3,10 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# PyInstaller / Build Artifacts
+# PyInstaller Build Caches
 build/
 dist/
-setup-output/
 *.spec.bak
 
 # Android Build & Gradle Artifacts
