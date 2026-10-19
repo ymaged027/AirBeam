@@ -2954,6 +2954,10 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.0-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.0-Receiver.apk"),
+                os.path.join(r, "android-app", "app", "build", "outputs", "apk", "release", "AirBeam-v5.0-Receiver.apk"),
+                os.path.join(r, "android-app", "app", "build", "outputs", "apk", "debug", "AirBeam-v5.0-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v2.7-Receiver.apk"),
                 os.path.join(r, "AirBeam-v2.7-Receiver.apk"),
                 os.path.join(r, "android-app", "app", "build", "outputs", "apk", "release", "AirBeam-v2.7-Receiver.apk"),
@@ -4444,7 +4448,7 @@ class AirBeamSenderApp(BaseTkApp):
         container = ttk.Frame(scroll_frame.scrollable_window, style="Card.TFrame", padding=20)
         container.pack(fill="both", expand=True)
 
-        apk_filename = os.path.basename(self.apk_path) if self.apk_path else "AirBeam-v2.7-Receiver.apk"
+        apk_filename = os.path.basename(self.apk_path) if self.apk_path else "AirBeam-v5.0-Receiver.apk"
         ttk.Label(container, text=f"Install {apk_filename} on Android", style="CardHeader.TLabel").pack(anchor="center")
         ttk.Label(container, text="Scan with your tablet camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
 
@@ -4458,7 +4462,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.generate_qr_code(apk_url)
 
         instructions = (
-            "AirBeam v2.7 Update Features:\n"
+            "AirBeam v5.0 Update Features:\n"
             "• Interactive Hotspot Toggle Switch: 1-click connect/disconnect with home Wi-Fi auto-restore.\n"
             "• Pipelined 6-Stream Turbo Engine: Zero stop-and-wait stalls with 8 MB socket buffer.\n"
             "• Precision Speedometer: Receiver-confirmed rolling window EMA & pause-aware timer.\n"

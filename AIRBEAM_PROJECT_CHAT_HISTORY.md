@@ -985,3 +985,27 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Updated release badges, download tables, and repository trees to reference `AirBeam-v5.0-Setup.exe` (31.0 MB) and `AirBeam-v5.0-Portable.zip` (43.6 MB).
    - Updated APK download size to 4.7 MB.
    - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
+
+---
+
+## 30. AirBeam v5.0 — Android APK Version Synchronization to v5.0
+
+### User Prompts:
+> *"why did't you change the apk version to match the apps"*
+> *"yes and do it as fast as possible"*
+
+### Engineering Actions & Deliverables:
+1. **Android Receiver Version Bump (`android-app/app/build.gradle`):**
+   - Updated `versionCode 9` and `versionName "5.0"` to match the desktop application suite.
+   - Recompiled via Gradle 8.5 (`gradlew.bat assembleRelease`) to produce `AirBeam-v5.0-Receiver.apk` (4,685,179 bytes).
+   - Deployed release binaries to `release/AirBeam-v5.0-Receiver.apk`, `release/AirBeam-Receiver.apk`, and root `AirBeam-v5.0-Receiver.apk`.
+2. **Desktop Sender APK Resolution (`sender.py` & `AirBeam.spec`):**
+   - Updated `locate_apk()` to look for `AirBeam-v5.0-Receiver.apk` first.
+   - Updated Tab 4 header and direct download links to serve `AirBeam-v5.0-Receiver.apk`.
+   - Updated `AirBeam.spec` datas to bundle `AirBeam-v5.0-Receiver.apk` into the standalone binary distribution.
+3. **Distribution Recompilation & Documentation:**
+   - Recompiled PyInstaller standalone executable into `dist/AirBeam/`.
+   - Recompiled Inno Setup 6 installer (`setup-output/AirBeam-v5.0-Setup.exe`).
+   - Repackaged portable ZIP (`setup-output/AirBeam-v5.0-Portable.zip`).
+   - Updated `README.md` download tables, badges, and repository tree.
+   - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.

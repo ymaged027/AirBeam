@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/badge/Release-v5.0-0284c7?style=for-the-badge&logo=windows&logoColor=white)](setup-output/AirBeam-v5.0-Setup.exe?raw=true)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v2.7-Receiver.apk?raw=true)
+[![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v5.0-Receiver.apk?raw=true)
 [![iOS](https://img.shields.io/badge/iOS%20Safari-Zero%20Install-000000?style=for-the-badge&logo=apple&logoColor=white)](#3--iphone--ios-zero-install-web-portal)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
@@ -16,7 +16,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **AirBeam Windows Installer** | `.exe` (Inno Setup) | **31.0 MB** | Recommended for Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v5.0-Setup.exe**](setup-output/AirBeam-v5.0-Setup.exe?raw=true) |
 | **AirBeam Portable Edition** | `.zip` (Standalone) | **43.6 MB** | Zero-install archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v5.0-Portable.zip**](setup-output/AirBeam-v5.0-Portable.zip?raw=true) |
-| **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Download AirBeam-v2.7-Receiver.apk**](release/AirBeam-v2.7-Receiver.apk?raw=true) |
+| **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Download AirBeam-v5.0-Receiver.apk**](release/AirBeam-v5.0-Receiver.apk?raw=true) |
 | **iPhone / iPad Web Portal** | Browser Link | *0 MB* | No app installation needed on iOS. Open Safari and connect over Home Wi-Fi or Windows 5 GHz Hotspot. | [📖 **View iOS Quick Start**](#3--iphone--ios-zero-install-web-portal) |
 
 ---
@@ -150,7 +150,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
    - **iPhone / iOS**: Connect iPhone to Wi-Fi or Hotspot and scan the on-screen QR code.
 
 ### Android Device
-1. Install [**AirBeam-v2.7-Receiver.apk**](release/AirBeam-v2.7-Receiver.apk?raw=true) (or open Tab 4 in the desktop app and scan the QR code).
+1. Install [**AirBeam-v5.0-Receiver.apk**](release/AirBeam-v5.0-Receiver.apk?raw=true) (or open Tab 4 in the desktop app and scan the QR code).
 2. Open AirBeam Receiver on your Android tablet or phone.
 3. Keep the app open—transfers will stream directly to your Downloads folder at hardware speed.
 
@@ -173,7 +173,7 @@ AirBeam/
 │   └── assets/                        # High-resolution icons and logos
 ├── android-app/                       # Native Android Receiver project (Java NIO)
 ├── release/
-│   └── AirBeam-v2.7-Receiver.apk      # Knox V1+V2 signed Android receiver APK
+│   └── AirBeam-v5.0-Receiver.apk      # Knox V1+V2 signed Android receiver APK
 ├── Fix-AirBeam-Firewall.bat           # Self-elevating Windows Firewall configurator
 ├── Launch-AirBeam.bat                 # Universal launcher script
 ├── Launch-AirBeam-v5.0.bat            # Production launcher script (v5.0)
