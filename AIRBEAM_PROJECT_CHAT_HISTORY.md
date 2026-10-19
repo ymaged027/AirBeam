@@ -1057,3 +1057,41 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Created `Launch-AirBeam-v5.1.bat` and generated Desktop shortcut `AirBeam v5.1.lnk`.
    - Verified zero syntax errors via `python -m py_compile desktop-sender/sender.py`.
    - Strictly preserved `C:\Users\youssef\WirelessFileTransfer` (v2.7) 100% untouched.
+
+---
+
+## 32. AirBeam Single-Instance IPC Architecture & Explorer Forward-to-Existing-Window
+
+### User Prompt:
+> *"1- make it when the app is open and i right click a file and select send with beam if the app is already open only add the file to the existing window"*
+
+### Detailed Technical Solutions & Deliverables:
+
+1. **Single-Instance IPC Loopback Architecture (`desktop-sender/sender.py`)**:
+   - Implemented `SingleInstanceIPCServer` running a daemon socket listener on `127.0.0.1:7779` (`AIRBEAM_IPC_PORT`).
+   - Uses `SO_EXCLUSIVEADDRUSE` on Windows to prevent port-hijacking and ensure dedicated single-instance ownership.
+   - Communicates using length-prefixed JSON protocol with magic identifier (`ABM_IPC_V1`) and actions (`ADD_FILES` or `FOCUS`).
+   - Dispatches received files onto the Tkinter main GUI thread via `self.app.after(0, ...)`.
+
+2. **Win32 Named Mutex Secondary-Instance Detection**:
+   - Uses `ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\AirBeam_SingleInstance_App_Mutex")` to instantly detect whether a primary instance already exists (`ERROR_ALREADY_EXISTS = 183`).
+   - When launching the primary instance, claims the mutex handle for process lifetime with zero startup overhead.
+   - When a secondary process is spawned (e.g. from right-clicking a file in Windows Explorer or clicking a shortcut), detects the existing instance and immediately forwards the file list to `127.0.0.1:7779`.
+   - Handles multi-file concurrent Explorer launches (where Windows Explorer spawns multiple secondary processes simultaneously) via retry backoff until the primary instance accepts socket delivery.
+
+3. **Dynamic Window Foregrounding & Unminimizing (`bring_to_front`)**:
+   - Restores the AirBeam window to the top foreground when forwarded files or focus requests arrive.
+   - Combines Tkinter methods (`deiconify()`, `lift()`, `focus_force()`, temporary `-topmost`) with native Win32 API calls (`ShowWindow(SW_RESTORE=9)` and `SetForegroundWindow()`) targeting the root HWND discovered via `GetAncestor(hwnd, GA_ROOT=2)`.
+   - Guarantees the application unminimizes and pops to the front over File Explorer.
+
+4. **Seamless File Queue Staging (`on_ipc_received`)**:
+   - Calls `on_global_files_dropped()` with forwarded paths.
+   - Automatically stages files and unpacked folders into the active tab's queue (Android, PC to PC, or iPhone/iOS) and updates the UI summary.
+   - Secondary process receives `ACK_OK` and exits immediately with `sys.exit(0)`, completely avoiding duplicate GUI instances.
+
+5. **Verification & Cleanup**:
+   - Verified end-to-end forward-and-queue IPC test across separate subprocesses.
+   - Tested syntax and byte-compilation via `python -m py_compile desktop-sender/sender.py`.
+   - Proper socket and mutex cleanup in `on_window_close()`.
+   - Guaranteed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
+

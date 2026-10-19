@@ -149,6 +149,152 @@ else:
     WNDPROC_PROTO = None
 
 AIRBEAM_CONFIG_FILE = os.path.join(APP_ROOT, "airbeam_config.json")
+AIRBEAM_IPC_PORT = 7779
+AIRBEAM_IPC_MAGIC = "ABM_IPC_V1"
+_AIRBEAM_APP_MUTEX = None
+
+
+def try_forward_to_running_instance(file_paths: List[str]) -> bool:
+    """
+    Attempts to connect to an existing running instance of AirBeam on 127.0.0.1:AIRBEAM_IPC_PORT.
+    If an instance is already running (or another instance is actively starting up), retries briefly,
+    sends the files or focus command, waits for acknowledgment, and returns True so the caller exits immediately.
+    If no instance is running, claims the primary instance mutex and returns False to launch normally.
+    """
+    global _AIRBEAM_APP_MUTEX
+    is_secondary = False
+
+    if os.name == "nt":
+        try:
+            kernel32 = getattr(ctypes, "windll", None) and getattr(ctypes.windll, "kernel32", None)
+            if kernel32:
+                mutex_handle = kernel32.CreateMutexW(None, False, "Local\\AirBeam_SingleInstance_App_Mutex")
+                last_err = kernel32.GetLastError()
+                if last_err == 183:  # ERROR_ALREADY_EXISTS
+                    is_secondary = True
+                    if mutex_handle:
+                        kernel32.CloseHandle(mutex_handle)
+                else:
+                    # We are the primary instance! Hold mutex handle for lifetime of process
+                    _AIRBEAM_APP_MUTEX = mutex_handle
+                    return False
+        except Exception as e:
+            print(f"Single-instance mutex check: {e}")
+
+    # If secondary instance or non-Windows, attempt to forward to running instance
+    # Allow a few retries in case primary instance is currently in the middle of launching
+    max_retries = 18 if is_secondary else 1
+    for attempt in range(max_retries):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
+            if sock.connect_ex(("127.0.0.1", AIRBEAM_IPC_PORT)) != 0:
+                sock.close()
+                if is_secondary and attempt < max_retries - 1:
+                    time.sleep(0.1)
+                    continue
+                return False
+
+            payload = {
+                "magic": AIRBEAM_IPC_MAGIC,
+                "action": "ADD_FILES" if file_paths else "FOCUS",
+                "files": file_paths
+            }
+            data = json.dumps(payload).encode("utf-8")
+            msg = struct.pack("!I", len(data)) + data
+            sock.sendall(msg)
+
+            sock.settimeout(2.5)
+            ack = sock.recv(16)
+            sock.close()
+            return ack == b"ACK_OK"
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(0.1)
+                continue
+            print(f"IPC forward check: {e}")
+            return False
+
+    return False
+
+
+class SingleInstanceIPCServer:
+    """
+    Local loopback TCP server listening on 127.0.0.1:AIRBEAM_IPC_PORT.
+    When a second instance is launched (e.g. from right-clicking a file in Explorer or clicking shortcut),
+    receives the file list, queues them into the running application, and restores window focus.
+    """
+    def __init__(self, app_instance, port=AIRBEAM_IPC_PORT):
+        self.app = app_instance
+        self.port = port
+        self.running = True
+        self.sock = None
+        self.thread = None
+
+    def start(self):
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE") and os.name == "nt":
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            elif hasattr(socket, "SO_REUSEADDR") and os.name != "nt":
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.bind(("127.0.0.1", self.port))
+            self.sock.listen(5)
+            self.thread = threading.Thread(target=self._listen_loop, daemon=True, name="AirBeam-IPC-Listener")
+            self.thread.start()
+        except Exception as e:
+            print(f"Could not bind IPC server on 127.0.0.1:{self.port}: {e}")
+
+    def _listen_loop(self):
+        while self.running:
+            try:
+                client, _ = self.sock.accept()
+            except Exception:
+                break
+            try:
+                client.settimeout(2.0)
+                len_bytes = bytearray(4)
+                view = memoryview(len_bytes)
+                pos = 0
+                while pos < 4:
+                    r = client.recv_into(view[pos:])
+                    if not r:
+                        break
+                    pos += r
+                if pos == 4:
+                    length = struct.unpack("!I", len_bytes)[0]
+                    if 0 < length <= 1024 * 1024:  # Up to 1MB JSON
+                        data = bytearray(length)
+                        d_view = memoryview(data)
+                        d_pos = 0
+                        while d_pos < length:
+                            r = client.recv_into(d_view[d_pos:])
+                            if not r:
+                                break
+                            d_pos += r
+                        if d_pos == length:
+                            payload = json.loads(data.decode("utf-8", errors="replace"))
+                            if payload.get("magic") == AIRBEAM_IPC_MAGIC:
+                                client.sendall(b"ACK_OK")
+                                files = payload.get("files", [])
+                                if hasattr(self.app, "on_ipc_received") and getattr(self.app, "_is_alive", True):
+                                    self.app.after(0, lambda f=files: self.app.on_ipc_received(f))
+            except Exception as e:
+                print(f"IPC client error: {e}")
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+    def stop(self):
+        self.running = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+
 
 
 def get_windows_clipboard_files() -> List[str]:
@@ -3071,6 +3217,10 @@ class AirBeamSenderApp(BaseTkApp):
         self.iphone_portal = IPhonePortalServer(self, ports=IPHONE_PORTAL_PORTS)
         self.iphone_portal.start()
 
+        # Start Single-Instance IPC listener on 127.0.0.1:7779
+        self.ipc_server = SingleInstanceIPCServer(self, port=AIRBEAM_IPC_PORT)
+        self.ipc_server.start()
+
         # Capture current Wi-Fi profile on startup and persist if home Wi-Fi
         init_profile = get_current_wifi_profile()
         if init_profile and init_profile.strip().lower() != "airbeam":
@@ -3150,6 +3300,36 @@ class AirBeamSenderApp(BaseTkApp):
         # Start Coordinator and Wi-Fi link telemetry poller in background
         self.after(500, self.start_discovery_coordinator)
         self.after(800, self.update_wifi_telemetry_loop)
+
+    def bring_to_front(self):
+        """Restores window from minimized state and brings it to the top foreground."""
+        try:
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            self.attributes('-topmost', True)
+            self.after_idle(lambda: self.attributes('-topmost', False))
+            if os.name == "nt":
+                hwnd = self.winfo_id()
+                user32 = getattr(ctypes.windll, "user32", None)
+                if user32:
+                    parent_hwnd = (
+                        (getattr(user32, "GetAncestor", None) and user32.GetAncestor(hwnd, 2))
+                        or user32.GetParent(hwnd)
+                        or hwnd
+                    )
+                    user32.ShowWindow(parent_hwnd, 9)  # 9 = SW_RESTORE
+                    user32.SetForegroundWindow(parent_hwnd)
+        except Exception as e:
+            print(f"Error bringing window to front: {e}")
+
+    def on_ipc_received(self, files: List[str]):
+        """Handler called on main GUI thread when a secondary instance forwards files or focus."""
+        self.bring_to_front()
+        if files:
+            valid_paths = [os.path.normpath(os.path.abspath(f)) for f in files if os.path.exists(f)]
+            if valid_paths:
+                self.on_global_files_dropped(valid_paths)
 
     def load_airbeam_config(self) -> dict:
         if os.path.exists(AIRBEAM_CONFIG_FILE):
@@ -3396,6 +3576,18 @@ class AirBeamSenderApp(BaseTkApp):
 
     def on_window_close(self):
         self._is_alive = False
+        global _AIRBEAM_APP_MUTEX
+        if _AIRBEAM_APP_MUTEX and os.name == "nt":
+            try:
+                ctypes.windll.kernel32.CloseHandle(_AIRBEAM_APP_MUTEX)
+                _AIRBEAM_APP_MUTEX = None
+            except Exception:
+                pass
+        try:
+            if hasattr(self, "ipc_server") and self.ipc_server:
+                self.ipc_server.stop()
+        except Exception:
+            pass
         try:
             if hasattr(self, "drop_target"):
                 self.drop_target.unhook_all()
@@ -6688,6 +6880,18 @@ class AirBeamSenderApp(BaseTkApp):
         messagebox.showinfo("Speed Report", f"AirBeam V2 Telemetry report saved to:\n{report_path}")
 
 if __name__ == "__main__":
+    # Check if files or arguments are provided and if an instance is already running
+    cli_files = []
+    if len(sys.argv) > 1:
+        for arg in sys.argv[1:]:
+            p = os.path.normpath(os.path.abspath(arg))
+            if os.path.exists(p):
+                cli_files.append(p)
+
+    if try_forward_to_running_instance(cli_files):
+        # Successfully forwarded to existing running AirBeam window!
+        sys.exit(0)
+
     try:
         app = AirBeamSenderApp()
         app.mainloop()
