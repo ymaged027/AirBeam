@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">AirBeam Receiver</string>
+    <string name="status_listening">Listening for incoming files...</string>
+    <string name="status_stopped">Receiver Stopped</string>
+    <string name="device_ready">Ready to receive from your PC</string>
+    <string name="ip_label">Your Device Address:</string>
+    <string name="no_transfers">No files received yet. Send a file from your PC!</string>
+    <string name="btn_start">Start Receiver</string>
+    <string name="btn_stop">Stop Receiver</string>
+</resources>
