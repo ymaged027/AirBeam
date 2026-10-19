@@ -901,3 +901,46 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
    - Inno Setup installer compilation skipped per explicit prompt instruction.
    - Synced cleanly to remote GitHub repository.
+
+---
+
+## 28. AirBeam v5.0 — Native Window-Wide Drag-and-Drop & Multi-Tab File Queue Unification
+
+### User Prompts:
+> *"1- when i drag a file and drop it the app closes*
+> *2- add the drag and drop to be any where in the app not just a box*
+> *3- add the box of selected files to all the tabs execpt the qr"*
+
+### Engineering Actions & Deliverables:
+1. **Critical Crash Root Cause Analysis & Fix (Native 64-Bit Subclassing):**
+   - **Root Cause**: Third-party `windnd` (v1.0.7) truncated 64-bit function pointers in `GetWindowLongPtrA` due to default 32-bit `c_long` return types in ctypes without explicit `restype = ctypes.c_ssize_t`. On dropping a file, `CallWindowProcW` attempted to branch into truncated memory, triggering fatal `EXCEPTION_ACCESS_VIOLATION` (`0xC0000005`) that immediately crashed the Python runtime.
+   - **Fix**: Replaced `windnd` with an internal, robust `NativeWindowsDropTarget` engine directly utilizing Win32 APIs with explicit 64-bit argument and return types (`wintypes.HWND`, `ctypes.c_ssize_t`, `DragQueryFileW`, `DragFinish`). Dropped file events are decoded safely in Unicode without memory corruption and dispatched asynchronously to the Tkinter event loop via `root.after(0, ...)`.
+
+2. **Window-Wide Drag & Drop Interception:**
+   - Instead of restricting drop targets to individual listbox widgets, `NativeWindowsDropTarget` hooks the top-level parent HWND (`GetParent(root.winfo_id())`), the client window (`root.winfo_id()`), and recursively all child windows using Win32 `EnumChildWindows` with `DragAcceptFiles(hwnd, True)`.
+   - Users can drag files and drop them **anywhere** inside the application window—onto headers, cards, buttons, margins, or listboxes—with the OS mouse cursor displaying the active `[+] Copy` indicator everywhere.
+   - Dropped files are automatically routed to the currently selected tab's staging queue:
+     - **Tab 1 (`Beam to Android`)**: Appends to `self.selected_files` & refreshes staging listbox.
+     - **Tab 2 (`PC to PC`)**: Appends to `self.pc_selected_files` & updates PC transfer queue.
+     - **Tab 3 (`iPhone / iOS`)**: Appends to `self.selected_files` & updates iPhone Safari staged queue.
+     - **Tab 4 (`Install Android APK` - QR Tab)**: Gracefully routes files to staging queue without errors.
+
+3. **Unified Selected Files Box on All Tabs (Except QR Tab):**
+   - Added a dedicated, stylized **`📁 Files Staged for iPhone & iPad (Web Portal)`** card to Tab 3 (`build_ios_tab`), matching the exact visual and operational UX of Tab 1 and Tab 2.
+   - Contains:
+     - `+ Add Files` (`self.add_files`)
+     - `+ Add Folder` (`self.add_folder`)
+     - `Clear` (`self.clear_ios_staged_files`)
+     - `📋 Send Clipboard` (`self.beam_clipboard_to_ios`)
+     - Scrollable `self.listbox_ios_files` (dark navy `#0f172a`, matching theme)
+     - Live counter & size badge (`self.lbl_ios_total_size`)
+   - Synchronized `refresh_file_list()` so staging files from either Tab 1 or Tab 3 immediately updates both queues and the iPhone Safari Web Portal `/api/files` endpoint.
+   - Preserved Tab 4 (`Install Android APK`) as a clean, focused QR installation view without a file box, exactly per user specification.
+
+4. **Monotonic Version Bump to v5.0:**
+   - Bumped version to **v5.0** across `sender.py`, application window title, Web Portal title & header, Win32 AppUserModelID (`airbeam.wirelessfiletransfer.sender.5.0`), and diagnostic status dictionaries.
+   - Created `Launch-AirBeam-v5.0.bat` and updated `Launch-AirBeam.bat`.
+   - Updated `create_shortcut.ps1` and created fresh `AirBeam v5.0.lnk` on the user's Desktop while maintaining `AirBeam.lnk`.
+   - Updated `README.md` badges, download matrix, and architecture diagram.
+   - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
+

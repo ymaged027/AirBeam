@@ -106,11 +106,162 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import qrcode
 
+# ==============================================================================
+# NATIVE 64-BIT / 32-BIT WINDOWS DRAG-AND-DROP ENGINE (REPLACES BROKEN WINDND)
+# ==============================================================================
+GWLP_WNDPROC = -4
+WM_DROPFILES = 0x0233
+WM_DESTROY = 0x0002
+
 try:
-    import windnd
-    WINDND_AVAILABLE = True
+    import ctypes
+    from ctypes import wintypes
+    WNDPROC_PROTO = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t,
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM
+    )
+    NATIVE_DND_SUPPORTED = True
 except Exception:
-    WINDND_AVAILABLE = False
+    NATIVE_DND_SUPPORTED = False
+
+class NativeWindowsDropTarget:
+    """
+    Subclasses top-level and client Win32 HWNDs with explicit 64-bit ctypes prototypes
+    to intercept WM_DROPFILES across the ENTIRE application window (not just a box).
+    Completely avoids 32-bit truncation crashes (0xC0000005) inherent to third-party windnd.
+    """
+    def __init__(self, root, callback):
+        self.root = root
+        self.callback = callback
+        self.hooks = {}  # hwnd: (wndproc_func_instance, old_wndproc_ptr)
+        self.user32 = getattr(ctypes.windll, "user32", None) if NATIVE_DND_SUPPORTED else None
+        self.shell32 = getattr(ctypes.windll, "shell32", None) if NATIVE_DND_SUPPORTED else None
+        self._last_drop_time = 0.0
+
+        if not self.user32 or not self.shell32:
+            return
+
+        # Explicit 64-bit / 32-bit function prototypes
+        if hasattr(self.user32, "SetWindowLongPtrW"):
+            self._set_wndproc = self.user32.SetWindowLongPtrW
+            self._set_wndproc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+            self._set_wndproc.restype = ctypes.c_ssize_t
+
+            self._get_wndproc = self.user32.GetWindowLongPtrW
+            self._get_wndproc.argtypes = [wintypes.HWND, ctypes.c_int]
+            self._get_wndproc.restype = ctypes.c_ssize_t
+        else:
+            self._set_wndproc = self.user32.SetWindowLongW
+            self._set_wndproc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+            self._set_wndproc.restype = ctypes.c_long
+
+            self._get_wndproc = self.user32.GetWindowLongW
+            self._get_wndproc.argtypes = [wintypes.HWND, ctypes.c_int]
+            self._get_wndproc.restype = ctypes.c_long
+
+        self._call_wndproc = self.user32.CallWindowProcW
+        self._call_wndproc.argtypes = [
+            ctypes.c_ssize_t,
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM
+        ]
+        self._call_wndproc.restype = ctypes.c_ssize_t
+
+        self._drag_accept_files = self.shell32.DragAcceptFiles
+        self._drag_accept_files.argtypes = [wintypes.HWND, wintypes.BOOL]
+        self._drag_accept_files.restype = None
+
+        self._drag_query_file = self.shell32.DragQueryFileW
+        self._drag_query_file.argtypes = [
+            wintypes.WPARAM,
+            wintypes.UINT,
+            wintypes.LPWSTR,
+            wintypes.UINT
+        ]
+        self._drag_query_file.restype = wintypes.UINT
+
+        self._drag_finish = self.shell32.DragFinish
+        self._drag_finish.argtypes = [wintypes.WPARAM]
+        self._drag_finish.restype = None
+
+    def _make_wndproc(self, old_proc):
+        def _wnd_proc(hwnd, msg, wparam, lparam):
+            if msg == WM_DROPFILES:
+                h_drop = wparam
+                file_paths = []
+                try:
+                    count = self._drag_query_file(h_drop, 0xFFFFFFFF, None, 0)
+                    for i in range(count):
+                        buf_len = self._drag_query_file(h_drop, i, None, 0)
+                        buf = ctypes.create_unicode_buffer(buf_len + 1)
+                        self._drag_query_file(h_drop, i, buf, buf_len + 1)
+                        file_paths.append(buf.value)
+                except Exception as e:
+                    print(f"Error querying dropped files: {e}")
+                finally:
+                    try:
+                        self._drag_finish(h_drop)
+                    except Exception:
+                        pass
+
+                now = time.time()
+                if file_paths and (now - self._last_drop_time) > 0.15:
+                    self._last_drop_time = now
+                    if self.callback:
+                        self.root.after(0, lambda f=file_paths: self.callback(f))
+                return 0
+
+            return self._call_wndproc(old_proc, hwnd, msg, wparam, lparam)
+
+        return WNDPROC_PROTO(_wnd_proc)
+
+    def hook_hwnd(self, hwnd):
+        if not hwnd or hwnd in self.hooks or not self.user32:
+            return
+        try:
+            old_proc = self._get_wndproc(hwnd, GWLP_WNDPROC)
+            if not old_proc:
+                return
+            new_proc = self._make_wndproc(old_proc)
+            self.hooks[hwnd] = (new_proc, old_proc)
+            self._drag_accept_files(hwnd, True)
+            self._set_wndproc(hwnd, GWLP_WNDPROC, ctypes.cast(new_proc, ctypes.c_void_p).value)
+        except Exception:
+            pass
+
+    def hook_all(self):
+        if not self.user32:
+            return
+        try:
+            self.root.update_idletasks()
+            client_hwnd = self.root.winfo_id()
+            parent_hwnd = self.user32.GetParent(client_hwnd) or client_hwnd
+            self.hook_hwnd(parent_hwnd)
+            self.hook_hwnd(client_hwnd)
+
+            enum_cb = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(
+                lambda h, l: (self.hook_hwnd(h), True)[1]
+            )
+            self.user32.EnumChildWindows(parent_hwnd, enum_cb, 0)
+        except Exception:
+            pass
+
+    def unhook_all(self):
+        if not self.user32:
+            return
+        for hwnd, (new_proc, old_proc) in list(self.hooks.items()):
+            try:
+                self._drag_accept_files(hwnd, False)
+                self._set_wndproc(hwnd, GWLP_WNDPROC, old_proc)
+            except Exception:
+                pass
+        self.hooks.clear()
+
 
 SESSION_NODE_ID = uuid.uuid4().hex[:8]
 
@@ -1174,7 +1325,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v4.9 • Web Portal</title>
+    <title>AirBeam v5.0 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1412,7 +1563,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v4.9</h1>
+        <h1><span>⚡</span> AirBeam v5.0</h1>
         <p>Ultra-Fast Wireless Transfer for PC, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -2125,7 +2276,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v4.9 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.0 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -2716,7 +2867,7 @@ class ScrollableFrame(tk.Frame):
 class AirBeamSenderApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AirBeam v4.9 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title("AirBeam v5.0 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -2786,7 +2937,7 @@ class AirBeamSenderApp(tk.Tk):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.4.9')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.0')
         except Exception:
             pass
 
@@ -2825,6 +2976,12 @@ class AirBeamSenderApp(tk.Tk):
         self.setup_styles()
         self.setup_ui()
 
+        # Window-wide Drag-and-Drop Handler (catches drops anywhere in the entire window)
+        self.drop_target = NativeWindowsDropTarget(self, self.on_global_files_dropped)
+        self.after(200, self.drop_target.hook_all)
+        if hasattr(self, "notebook"):
+            self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.after(50, self.drop_target.hook_all))
+
         # Handle window close to disconnect from airbeam and restore previous Wi-Fi
         self.protocol("WM_DELETE_WINDOW", self.on_window_close)
 
@@ -2835,7 +2992,30 @@ class AirBeamSenderApp(tk.Tk):
     def get_best_home_wifi_profile(self) -> Optional[str]:
         return get_best_home_wifi_profile(app_instance=self)
 
+    def on_global_files_dropped(self, files):
+        """Dispatches dropped files anywhere in the app to the active tab's file queue."""
+        if not files:
+            return
+        current_tab = 0
+        try:
+            if hasattr(self, "notebook"):
+                current_tab = self.notebook.index(self.notebook.select())
+        except Exception:
+            current_tab = 0
+
+        if current_tab == 1:
+            # Tab 1: PC to PC
+            self._on_pc_files_dropped(files)
+        else:
+            # Tab 0: Android, Tab 2: iPhone / iOS, or Tab 3: APK QR fallback
+            self._on_main_files_dropped(files)
+
     def on_window_close(self):
+        try:
+            if hasattr(self, "drop_target"):
+                self.drop_target.unhook_all()
+        except Exception:
+            pass
         try:
             if hasattr(self, "pc_receiver"):
                 self.pc_receiver.stop()
@@ -3167,18 +3347,18 @@ class AirBeamSenderApp(tk.Tk):
         style.configure("TProgressbar", thickness=16, troughcolor="#334155", background="#2563eb")
 
     def setup_ui(self):
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=16, pady=16)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, padx=16, pady=16)
 
-        tab_send = tk.Frame(notebook, bg="#0f172a")
-        tab_pc = tk.Frame(notebook, bg="#0f172a")
-        tab_ios = tk.Frame(notebook, bg="#0f172a")
-        tab_apk = tk.Frame(notebook, bg="#0f172a")
+        tab_send = tk.Frame(self.notebook, bg="#0f172a")
+        tab_pc = tk.Frame(self.notebook, bg="#0f172a")
+        tab_ios = tk.Frame(self.notebook, bg="#0f172a")
+        tab_apk = tk.Frame(self.notebook, bg="#0f172a")
 
-        notebook.add(tab_send, text="  ⚡ Beam to Android (50-95+ MB/s)  ")
-        notebook.add(tab_pc, text="  💻 PC to PC (50-100+ MB/s)  ")
-        notebook.add(tab_ios, text="  📱 iPhone / iOS (50-95+ MB/s)  ")
-        notebook.add(tab_apk, text="  📥 Install Android APK  ")
+        self.notebook.add(tab_send, text="  ⚡ Beam to Android (50-95+ MB/s)  ")
+        self.notebook.add(tab_pc, text="  💻 PC to PC (50-100+ MB/s)  ")
+        self.notebook.add(tab_ios, text="  📱 iPhone / iOS (50-95+ MB/s)  ")
+        self.notebook.add(tab_apk, text="  📥 Install Android APK  ")
 
         self.build_send_tab(tab_send)
         self.build_pc_tab(tab_pc)
@@ -3333,14 +3513,11 @@ class AirBeamSenderApp(tk.Tk):
         self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
         scrollbar.config(command=self.listbox_files.yview)
 
-        if WINDND_AVAILABLE:
-            try:
-                windnd.hook_dropfiles(self.listbox_files, func=self._on_main_files_dropped)
-                self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Drag & drop files here or click '+ Add Files' above", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
-            except Exception:
-                self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above to select files", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
-        else:
-            self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above to select files", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
+        self.lbl_total_size = tk.Label(
+            files_card,
+            text="0 files selected (0 B) — Drag & drop files anywhere in window or click '+ Add Files' above",
+            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+        )
         self.lbl_total_size.pack(anchor="w", pady=(6, 0))
 
         # Progress & Actions Card
@@ -3722,23 +3899,11 @@ class AirBeamSenderApp(tk.Tk):
         self.listbox_pc_files.pack(fill="both", expand=True, padx=4, pady=4)
         pc_scrollbar.config(command=self.listbox_pc_files.yview)
 
-        if WINDND_AVAILABLE:
-            try:
-                windnd.hook_dropfiles(self.listbox_pc_files, func=self._on_pc_files_dropped)
-                self.lbl_pc_total_size = tk.Label(
-                    send_card, text="0 files selected (0 B) — Drag & drop files here or click '+ Add Files' above",
-                    bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
-                )
-            except Exception:
-                self.lbl_pc_total_size = tk.Label(
-                    send_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above",
-                    bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
-                )
-        else:
-            self.lbl_pc_total_size = tk.Label(
-                send_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above",
-                bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
-            )
+        self.lbl_pc_total_size = tk.Label(
+            send_card,
+            text="0 file(s) selected (0 B) — Drag & drop files anywhere in window or click '+ Add Files' above",
+            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+        )
         self.lbl_pc_total_size.pack(anchor="w", pady=(6, 8))
 
         # Progress & Controls
@@ -3867,17 +4032,21 @@ class AirBeamSenderApp(tk.Tk):
         self.update_pc_file_listbox()
 
     def update_pc_file_listbox(self):
-        self.listbox_pc_files.delete(0, tk.END)
+        if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
+            self.listbox_pc_files.delete(0, tk.END)
         total_bytes = 0
         for f in self.pc_selected_files:
             if os.path.exists(f):
                 sz = os.path.getsize(f)
                 total_bytes += sz
-                self.listbox_pc_files.insert(tk.END, f"{os.path.basename(f)} ({format_bytes(sz)})")
+                if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
+                    self.listbox_pc_files.insert(tk.END, f"{os.path.basename(f)} ({format_bytes(sz)})")
         count = len(self.pc_selected_files)
-        self.lbl_pc_total_size.config(
-            text=f"{count} file(s) selected ({format_bytes(total_bytes)})"
-        )
+        size_str = format_bytes(total_bytes)
+        if hasattr(self, "lbl_pc_total_size") and self.lbl_pc_total_size.winfo_exists():
+            self.lbl_pc_total_size.config(
+                text=f"{count} file(s) selected ({size_str}) — Drag & drop files anywhere in window or click '+ Add Files' above"
+            )
 
     def start_pc_send_thread(self):
         target = self.target_pc_ip.get().strip()
@@ -4404,7 +4573,7 @@ class AirBeamSenderApp(tk.Tk):
         # Header Info Card
         header_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         header_card.pack(fill="x", padx=10, pady=(6, 10))
-        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v4.9)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.0)", style="CardHeader.TLabel").pack(anchor="w")
         ttk.Label(header_card, text="Zero app installation required on iOS! Use Option 1 below for instant transfer over Home Wi-Fi, or Options 2 & 3 for direct router-bypass speeds (50–95+ MB/s).", style="CardBody.TLabel").pack(anchor="w", pady=(2, 0))
 
         # --- OPTION 1: Transfer Over Home Wi-Fi Router (Zero Hotspot Required) ---
@@ -4573,61 +4742,81 @@ class AirBeamSenderApp(tk.Tk):
         self.active_opt2_portal_url = None
         self.build_opt2_disconnected_view()
 
-        # --- CARD 4: File Management, Clipboard & Speedometer ---
+        # --- CARD 4: Files Staged for iPhone & iPad (Web Portal) ---
+        ios_files_card = ttk.Frame(container, style="Card.TFrame", padding=14)
+        ios_files_card.pack(fill="x", padx=10, pady=(0, 10))
+
+        top_ios_bar = tk.Frame(ios_files_card, bg="#1e293b")
+        top_ios_bar.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(top_ios_bar, text="📁 Files Staged for iPhone & iPad (Web Portal)", style="CardHeader.TLabel").pack(side="left")
+
+        btn_ios_clear = ttk.Button(top_ios_bar, text="Clear", style="Secondary.TButton", command=self.clear_ios_staged_files)
+        btn_ios_clear.pack(side="right")
+
+        btn_ios_add_folder = ttk.Button(top_ios_bar, text="+ Add Folder", style="Secondary.TButton", command=self.add_folder)
+        btn_ios_add_folder.pack(side="right", padx=4)
+
+        btn_ios_add_files = ttk.Button(top_ios_bar, text="+ Add Files", style="Primary.TButton", command=self.add_files)
+        btn_ios_add_files.pack(side="right", padx=4)
+
+        btn_ios_clip = ttk.Button(top_ios_bar, text="📋 Send Clipboard", style="Secondary.TButton", command=self.beam_clipboard_to_ios)
+        btn_ios_clip.pack(side="right", padx=(4, 0))
+
+        ios_list_frame = tk.Frame(ios_files_card, bg="#0f172a")
+        ios_list_frame.pack(fill="x", expand=True)
+
+        ios_scrollbar = tk.Scrollbar(ios_list_frame)
+        ios_scrollbar.pack(side="right", fill="y")
+
+        self.listbox_ios_files = tk.Listbox(
+            ios_list_frame,
+            height=6,
+            bg="#0f172a",
+            fg="#f8fafc",
+            selectbackground="#2563eb",
+            selectforeground="#ffffff",
+            font=("Segoe UI", 10),
+            bd=0,
+            highlightthickness=0,
+            yscrollcommand=ios_scrollbar.set
+        )
+        self.listbox_ios_files.pack(fill="both", expand=True, padx=4, pady=4)
+        ios_scrollbar.config(command=self.listbox_ios_files.yview)
+
+        self.lbl_ios_total_size = tk.Label(
+            ios_files_card,
+            text="0 files selected (0 B) — Drag & drop files anywhere in window or click '+ Add Files' above",
+            bg="#1e293b",
+            fg="#94a3b8",
+            font=("Segoe UI", 9)
+        )
+        self.lbl_ios_total_size.pack(anchor="w", pady=(6, 0))
+
+        # --- CARD 5: iPhone Portal Received Files & Live Telemetry ---
         tools_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         tools_card.pack(fill="x", padx=10, pady=(0, 14))
 
-        ttk.Label(tools_card, text="iPhone Portal File Actions & Live Telemetry", style="CardHeader.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(tools_card, text="iPhone Portal Received Files & Live Telemetry", style="CardHeader.TLabel").pack(anchor="w", pady=(0, 8))
 
         btn_bar = tk.Frame(tools_card, bg="#1e293b")
         btn_bar.pack(fill="x", pady=(0, 8))
 
-        btn_add_ios = ttk.Button(btn_bar, text="+ Add Files for iPhone", style="Primary.TButton", command=self.add_files)
-        btn_clear_staged = ttk.Button(btn_bar, text="🗑️ Clear Staged Files", style="Secondary.TButton", command=self.clear_ios_staged_files)
-        btn_clip_ios = ttk.Button(btn_bar, text="📋 Send Clipboard", style="Secondary.TButton", command=self.beam_clipboard_to_ios)
         btn_open_recv = ttk.Button(btn_bar, text="📂 Open Received Folder", style="Secondary.TButton", command=self.open_iphone_received_folder)
+        btn_open_recv.pack(side="left", padx=(0, 6))
+
         btn_clear_recv = ttk.Button(btn_bar, text="🧹 Clear Uploaded Files", style="Secondary.TButton", command=self.clear_iphone_received_folder)
+        btn_clear_recv.pack(side="left", padx=(0, 6))
+
         btn_ref_qr = ttk.Button(btn_bar, text="🔄 Refresh QR", style="Secondary.TButton", command=self.refresh_ios_qr_codes)
-
-        self._btn_bar_layout_mode = None
-        def adapt_btn_bar(event=None):
-            w = event.width if (event and event.widget == btn_bar) else btn_bar.winfo_width()
-            if w <= 1:
-                w = tools_card.winfo_width()
-            mode = "wide" if w >= 620 else "narrow"
-            if mode == self._btn_bar_layout_mode:
-                return
-            self._btn_bar_layout_mode = mode
-            if mode == "wide":
-                btn_bar.grid_columnconfigure(0, weight=1)
-                btn_bar.grid_columnconfigure(1, weight=1)
-                btn_bar.grid_columnconfigure(2, weight=1)
-                btn_add_ios.grid(row=0, column=0, sticky="ew", padx=3, pady=3)
-                btn_clear_staged.grid(row=0, column=1, sticky="ew", padx=3, pady=3)
-                btn_clip_ios.grid(row=0, column=2, sticky="ew", padx=3, pady=3)
-                btn_open_recv.grid(row=1, column=0, sticky="ew", padx=3, pady=3)
-                btn_clear_recv.grid(row=1, column=1, sticky="ew", padx=3, pady=3)
-                btn_ref_qr.grid(row=1, column=2, sticky="ew", padx=3, pady=3)
-            else:
-                btn_bar.grid_columnconfigure(0, weight=1)
-                btn_bar.grid_columnconfigure(1, weight=1)
-                btn_bar.grid_columnconfigure(2, weight=0)
-                btn_add_ios.grid(row=0, column=0, sticky="ew", padx=3, pady=3)
-                btn_clear_staged.grid(row=0, column=1, sticky="ew", padx=3, pady=3)
-                btn_open_recv.grid(row=1, column=0, sticky="ew", padx=3, pady=3)
-                btn_clear_recv.grid(row=1, column=1, sticky="ew", padx=3, pady=3)
-                btn_clip_ios.grid(row=2, column=0, sticky="ew", padx=3, pady=3)
-                btn_ref_qr.grid(row=2, column=1, sticky="ew", padx=3, pady=3)
-
-        btn_bar.bind("<Configure>", adapt_btn_bar)
-        adapt_btn_bar()
+        btn_ref_qr.pack(side="left")
 
         # Live file counts summary
         self.lbl_ios_files_summary = tk.Label(
             tools_card, text="📤 Staged for iPhone: 0 file(s) (0 B)  •  📥 Received from iPhone: 0 file(s) (0 B)",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9), anchor="w"
         )
-        self.lbl_ios_files_summary.pack(fill="x", pady=(0, 8))
+        self.lbl_ios_files_summary.pack(fill="x", pady=(8, 8))
         tools_card.bind("<Configure>", lambda e: self.lbl_ios_files_summary.config(wraplength=max(200, e.width - 28)))
         self.update_ios_files_summary()
 
@@ -5058,7 +5247,7 @@ class AirBeamSenderApp(tk.Tk):
                 except Exception as e:
                     messagebox.showerror("Firewall Error", f"Failed to run Fix-AirBeam-Firewall.bat: {e}")
         else:
-            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v4.9 folder.")
+            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.0 folder.")
 
     def toggle_connect_to_iphone_hotspot(self, target_state):
         if target_state:
@@ -5410,17 +5599,34 @@ class AirBeamSenderApp(tk.Tk):
         self.refresh_file_list()
 
     def refresh_file_list(self):
-        self.listbox_files.delete(0, tk.END)
+        if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
+            self.listbox_files.delete(0, tk.END)
+        if hasattr(self, "listbox_ios_files") and self.listbox_ios_files.winfo_exists():
+            self.listbox_ios_files.delete(0, tk.END)
+
         total_bytes = 0
         for f in self.selected_files:
             try:
                 size = os.path.getsize(f)
                 total_bytes += size
-                self.listbox_files.insert(tk.END, f"{os.path.basename(f)}  ({format_bytes(size)})")
+                item_str = f"{os.path.basename(f)}  ({format_bytes(size)})"
             except Exception:
-                self.listbox_files.insert(tk.END, os.path.basename(f))
+                item_str = os.path.basename(f)
 
-        self.lbl_total_size.config(text=f"{len(self.selected_files)} files selected ({format_bytes(total_bytes)})")
+            if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
+                self.listbox_files.insert(tk.END, item_str)
+            if hasattr(self, "listbox_ios_files") and self.listbox_ios_files.winfo_exists():
+                self.listbox_ios_files.insert(tk.END, item_str)
+
+        count = len(self.selected_files)
+        size_str = format_bytes(total_bytes)
+        status_txt = f"{count} files selected ({size_str}) — Drag & drop files anywhere in window or click '+ Add Files' above"
+
+        if hasattr(self, "lbl_total_size") and self.lbl_total_size.winfo_exists():
+            self.lbl_total_size.config(text=status_txt)
+        if hasattr(self, "lbl_ios_total_size") and self.lbl_ios_total_size.winfo_exists():
+            self.lbl_ios_total_size.config(text=status_txt)
+
         self.update_ios_files_summary()
 
     # --- Discovery & Hotspot Handover Coordinator ---
@@ -5957,7 +6163,7 @@ class AirBeamSenderApp(tk.Tk):
             "parallel_streams": PARALLEL_STREAMS,
             "stripe_size_mb": DEFAULT_STRIPE_SIZE // (1024 * 1024),
             "chunk_slice_kb": CHUNK_SLICE_BYTES // 1024,
-            "status": "AirBeam v4.9 Ultra-Speed Multi-Stream Ready",
+            "status": "AirBeam v5.0 Ultra-Speed Multi-Stream Ready",
             "diagnostics": {
                 "router_bypassed": is_direct_hotspot,
                 "connection_mode_description": mode_desc,
