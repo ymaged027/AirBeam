@@ -854,3 +854,50 @@ User requested: *"it works fine now make me a setup for the app so i can share i
 
 4. **Git Remote Synchronization:**
    - Staged all changes and committed cleanly to GitHub `main` branch.
+
+---
+
+## 27. AirBeam v4.9 — Bug Fixes & Architectural Polish Specification
+
+### User Prompts:
+> *"Antigravity Execution Prompt: AirBeam v4.7 Bug Fixes & Architectural Polish ... Upgrade AirBeam in C:\Users\youssef\WirelessFileTransfer-v3.0 from v4.6 to v4.7 by fixing the following 5 bugs and adding 3 high-impact reliability upgrades. (Keep C:\Users\youssef\WirelessFileTransfer v2.7 100% untouched, and do NOT rebuild the Inno Setup installer unless explicitly asked):
+> 1. Fix Multi-Stream Thread-Safety Bug in PCReceiverServer (Critical File Corruption Fix)
+> 2. Fix UDP Self-Discovery Loopback (AIRBEAM_PC_PING Discovering Local PC)
+> 3. Sanitize iOS / macOS Filenames for Windows NTFS (PCReceiverServer & IPhonePortalServer)
+> 4. Add iOS Safari Screen Wake Lock & On-The-Fly Streaming ZIP (GET /download-all.zip)
+> 5. Add Drag-and-Drop Support & Received File History on Tab 2 (PC to PC)
+> 6. Version Increment to v4.7 & Git Commit"*
+
+### Engineering Actions & Deliverables:
+1. **Multi-Stream Thread-Safety Resolution (`PCReceiverServer`):**
+   - Transferred all incoming streams into `.airbeam.part` temporary files with upfront pre-allocation of total expected file length.
+   - Replaced shared Python file handle seek/write contention with dedicated, unbuffered (`buffering=0`, `r+b`) OS file descriptors per worker thread.
+   - Parallel worker threads write concurrently to NTFS storage with zero mutex lock contention.
+   - Atomically finalized finished files using `os.replace(.airbeam.part, target)` and cleaned failed transfers automatically.
+
+2. **Loopback Self-Discovery Elimination (`AIRBEAM_PC_PING` / `AIRBEAM_PC_PONG`):**
+   - Implemented unique 8-character `SESSION_NODE_ID` at startup.
+   - Appended node ID to all UDP 7778 ping/pong broadcast packets.
+   - Filtered out packets where `node_id == SESSION_NODE_ID` or source IP matches local host interface addresses.
+
+3. **NTFS Filename Sanitization:**
+   - Implemented `sanitize_ntfs_filename(name)` stripping path traversals and replacing illegal Windows characters `[<>:"/\\|?*\x00-\x1f]` with `_`.
+   - Protected both `PCReceiverServer` and `IPhonePortalServer` against `OSError: [Errno 22] Invalid argument`.
+
+4. **iOS Safari Screen Wake Lock & Single-Stream ZIP (`GET /download-all.zip`):**
+   - Integrated Screen Wake Lock API (`navigator.wakeLock.request('screen')`) in the iOS Web Portal to prevent iPhone display sleep during large transfers.
+   - Added subtle visual indicator: `🔒 Screen Wake Lock Active during transfer`.
+   - Implemented `GET /download-all.zip` endpoint streaming staged files on-the-fly using `SocketStreamAdapter` and `zipfile.ZIP_STORED` with zero buffering overhead.
+
+5. **Tab 2 Drag-and-Drop & Received File History:**
+   - Integrated `windnd` Windows drag-and-drop support on PC-to-PC (`listbox_pc_files`) and Android (`listbox_files`) queues.
+   - Added `[ 📂 Open Received_From_PC Folder ]` and `[ 🧹 Clear Received PC Files ]` action buttons.
+   - Added live counter badge: `📥 Received from PC: X file(s) (Y MB)`.
+   - Added interactive `📥 Received PC Files History` listbox with double-click to open/reveal files in Explorer.
+
+6. **Version Progression & Verification:**
+   - Clean monotonic progression to **v4.9** across `sender.py`, window title, Web Portal, AppUserModelID, `Launch-AirBeam-v4.9.bat`, `Launch-AirBeam-v4.7.bat`, and Desktop shortcuts (`AirBeam v4.9.lnk`, `AirBeam v4.7.lnk`).
+   - Verified syntax: `python -m py_compile desktop-sender/sender.py` passed with 0 errors.
+   - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
+   - Inno Setup installer compilation skipped per explicit prompt instruction.
+   - Synced cleanly to remote GitHub repository.

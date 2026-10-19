@@ -1,7 +1,7 @@
-# ⚡ AirBeam v4.8: Ultra-Speed Wireless Transfer
+# ⚡ AirBeam v4.9: Ultra-Speed Wireless Transfer
 ### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC, Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v4.8-0284c7?style=for-the-badge&logo=windows&logoColor=white)](setup-output/AirBeam-v4.8-Setup.exe?raw=true)
+[![Release](https://img.shields.io/badge/Release-v4.9-0284c7?style=for-the-badge&logo=windows&logoColor=white)](setup-output/AirBeam-v4.8-Setup.exe?raw=true)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v2.7-Receiver.apk?raw=true)
@@ -175,7 +175,8 @@ AirBeam/
 │   └── AirBeam-v2.7-Receiver.apk      # Knox V1+V2 signed Android receiver APK
 ├── Fix-AirBeam-Firewall.bat           # Self-elevating Windows Firewall configurator
 ├── Launch-AirBeam.bat                 # Universal launcher script
-├── Launch-AirBeam-v4.8.bat            # Versioned launcher script
+├── Launch-AirBeam-v4.9.bat            # Production launcher script (v4.9)
+├── Launch-AirBeam-v4.7.bat            # Compatibility launcher script
 ├── AirBeam-Setup.iss                  # Inno Setup 6 compiler configuration
 ├── create_shortcut.ps1                # Desktop shortcut generator
 ├── README.md                          # Master documentation & benchmark guide

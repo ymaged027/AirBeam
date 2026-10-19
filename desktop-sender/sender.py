@@ -98,10 +98,71 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import HTTPServer, SimpleHTTPRequestHandler, BaseHTTPRequestHandler, ThreadingHTTPServer
 import mimetypes
 import atexit
+import io
+import uuid
+import zipfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import qrcode
+
+try:
+    import windnd
+    WINDND_AVAILABLE = True
+except Exception:
+    WINDND_AVAILABLE = False
+
+SESSION_NODE_ID = uuid.uuid4().hex[:8]
+
+def sanitize_ntfs_filename(name: str) -> str:
+    """Strips directory traversal and replaces illegal Windows NTFS characters (<>:"/\\|?* and control chars) with '_'."""
+    if not name:
+        return f"file_{int(time.time())}"
+    clean = os.path.basename(name.replace("\\", "/").strip())
+    clean = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', clean)
+    clean = clean.rstrip(". ")
+    if not clean:
+        clean = f"file_{int(time.time())}"
+    return clean
+
+def get_all_local_ips() -> set:
+    ips = {"127.0.0.1", "192.168.137.1"}
+    try:
+        host = socket.gethostname()
+        for ip in socket.gethostbyname_ex(host)[2]:
+            ips.add(ip)
+    except Exception:
+        pass
+    try:
+        local = get_local_ip()
+        if local:
+            ips.add(local)
+    except Exception:
+        pass
+    return ips
+
+class SocketStreamAdapter(io.RawIOBase):
+    """Zero-copy raw socket stream adapter for streaming uncompressed zip data over HTTP sockets."""
+    def __init__(self, wfile, record_cb=None):
+        self.wfile = wfile
+        self.record_cb = record_cb
+        self._pos = 0
+
+    def write(self, b):
+        if not b:
+            return 0
+        self.wfile.write(b)
+        n = len(b)
+        self._pos += n
+        if self.record_cb:
+            self.record_cb(n)
+        return n
+
+    def seekable(self):
+        return False
+
+    def tell(self):
+        return self._pos
 
 mimetypes.add_type("application/vnd.android.package-archive", ".apk")
 
@@ -1113,7 +1174,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v4.8 • Web Portal</title>
+    <title>AirBeam v4.9 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1351,11 +1412,14 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v4.8</h1>
+        <h1><span>⚡</span> AirBeam v4.9</h1>
         <p>Ultra-Fast Wireless Transfer for PC, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
             <span>DIRECT 5GHz WI-FI PIPE (50-95+ MB/s)</span>
+        </div>
+        <div id="wakeLockBadge" style="display:none;align-items:center;justify-content:center;gap:6px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.35);color:#10B981;font-size:12px;font-weight:600;padding:4px 12px;border-radius:14px;margin:8px auto 0;width:fit-content;">
+            <span>🔒</span> Screen Wake Lock Active during transfer
         </div>
     </div>
 
@@ -1368,7 +1432,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div id="fileListContainer" class="file-list">
             <p style="color:var(--text-secondary);font-size:13px;margin:8px 0;text-align:center;">No files staged on PC yet. Add files on your PC or wait a moment.</p>
         </div>
-        <button id="btnDownloadAll" class="btn btn-green" style="margin-top:12px;display:none;" onclick="downloadAllFiles()">⚡ Download All Files</button>
+        <button id="btnDownloadAll" class="btn btn-green" style="margin-top:12px;display:none;" onclick="downloadAllFiles()">⚡ Download All Files (Single ZIP Stream)</button>
     </div>
 
     <!-- 2. Send Files to PC Card -->
@@ -1468,24 +1532,60 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                             <div class="file-name" title="${f.name}">${f.name}</div>
                             <div class="file-size">${f.formatted_size}</div>
                         </div>
-                        <a href="/download/${f.index}" class="btn-download" download="${f.name}">⬇️ Download</a>
+                        <a href="/download/${f.index}" class="btn-download" download="${f.name}" onclick="acquireWakeLock()">⬇️ Download</a>
                     </div>
                 `;
             });
             container.innerHTML = html;
         }
 
-        async function downloadAllFiles() {
-            for (let f of stagedFiles) {
-                const a = document.createElement('a');
-                a.href = `/download/${f.index}`;
-                a.download = f.name;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                await new Promise(r => setTimeout(r, 600));
+        let wakeLockSentinel = null;
+
+        async function acquireWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLockSentinel = await navigator.wakeLock.request('screen');
+                    updateWakeLockBadge(true);
+                    wakeLockSentinel.addEventListener('release', () => {
+                        wakeLockSentinel = null;
+                        updateWakeLockBadge(false);
+                    });
+                }
+            } catch (err) {
+                console.log("Screen Wake Lock not acquired:", err);
             }
-            showToast("Queued all files for download!");
+        }
+
+        async function releaseWakeLock() {
+            try {
+                if (wakeLockSentinel) {
+                    await wakeLockSentinel.release();
+                    wakeLockSentinel = null;
+                }
+            } catch (err) {
+                console.log("Screen Wake Lock release error:", err);
+            }
+            updateWakeLockBadge(false);
+        }
+
+        function updateWakeLockBadge(active) {
+            const b = document.getElementById('wakeLockBadge');
+            if (b) {
+                b.style.display = active ? 'inline-flex' : 'none';
+            }
+        }
+
+        async function downloadAllFiles() {
+            if (stagedFiles.length === 0) return;
+            await acquireWakeLock();
+            const a = document.createElement('a');
+            a.href = '/download-all.zip';
+            a.download = `AirBeam_Staged_Files_${Date.now()}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast("⚡ Streaming uncompressed ZIP download started!");
+            setTimeout(releaseWakeLock, 60000);
         }
 
         async function fetchClipboard() {
@@ -1555,32 +1655,37 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const percentEl = document.getElementById('uploadPercent');
 
             progressBox.style.display = 'block';
+            await acquireWakeLock();
 
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                fileNameEl.innerText = `Uploading (${i+1}/${files.length}): ${file.name}`;
-                barFill.style.width = '0%';
-                percentEl.innerText = '0%';
-                speedEl.innerText = '0.0 MB/s';
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    fileNameEl.innerText = `Uploading (${i+1}/${files.length}): ${file.name}`;
+                    barFill.style.width = '0%';
+                    percentEl.innerText = '0%';
+                    speedEl.innerText = '0.0 MB/s';
 
-                await uploadSingleFile(file, (loaded, total, spd) => {
-                    const pct = Math.round((loaded / total) * 100);
-                    barFill.style.width = `${pct}%`;
-                    percentEl.innerText = `${pct}% (${(loaded / (1024*1024)).toFixed(1)} / ${(total / (1024*1024)).toFixed(1)} MB)`;
-                    speedEl.innerText = spd;
-                });
+                    await uploadSingleFile(file, (loaded, total, spd) => {
+                        const pct = Math.round((loaded / total) * 100);
+                        barFill.style.width = `${pct}%`;
+                        percentEl.innerText = `${pct}% (${(loaded / (1024*1024)).toFixed(1)} / ${(total / (1024*1024)).toFixed(1)} MB)`;
+                        speedEl.innerText = spd;
+                    });
 
-                uploadedFilesHistory.unshift({
-                    name: file.name,
-                    size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                });
-                renderUploadedFiles();
+                    uploadedFilesHistory.unshift({
+                        name: file.name,
+                        size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    });
+                    renderUploadedFiles();
+                }
+
+                showToast("All files uploaded to PC successfully!");
+                setTimeout(() => { progressBox.style.display = 'none'; }, 2000);
+                document.getElementById('filePicker').value = '';
+            } finally {
+                await releaseWakeLock();
             }
-
-            showToast("All files uploaded to PC successfully!");
-            setTimeout(() => { progressBox.style.display = 'none'; }, 2000);
-            document.getElementById('filePicker').value = '';
         }
 
         let uploadedFilesHistory = [];
@@ -1788,6 +1893,30 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             except Exception:
                 return
 
+        elif path == '/download-all.zip':
+            try:
+                selected = [f for f in getattr(self.app, "selected_files", []) if os.path.exists(f)]
+                if not selected:
+                    self.send_error(404, "No staged files available to download")
+                    return
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                zip_filename = f"AirBeam_Bundle_{int(time.time())}.zip"
+                safe_name = urllib.parse.quote(zip_filename)
+                self.send_header('Content-Disposition', f'attachment; filename="{zip_filename}"; filename*=UTF-8\'\'{safe_name}')
+                self.send_header('Connection', 'close')
+                self.end_headers()
+
+                adapter = SocketStreamAdapter(self.wfile, record_cb=lambda n: self.app.record_ios_stream_bytes(n, is_upload=False))
+                with zipfile.ZipFile(adapter, mode='w', compression=zipfile.ZIP_STORED) as zf:
+                    for fpath in selected:
+                        arcname = sanitize_ntfs_filename(os.path.basename(fpath))
+                        zf.write(fpath, arcname=arcname)
+                return
+            except Exception:
+                return
+
         self.send_error(404, "Not Found")
 
     def do_POST(self):
@@ -1797,9 +1926,10 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         if path == '/upload':
             query = urllib.parse.parse_qs(parsed.query)
             raw_filename = query.get('filename', ['upload.bin'])[0]
-            filename = os.path.basename(urllib.parse.unquote(raw_filename))
-            if not filename:
-                filename = "unnamed_upload.bin"
+            clean_filename = sanitize_ntfs_filename(urllib.parse.unquote(raw_filename))
+            if not clean_filename:
+                clean_filename = "unnamed_upload.bin"
+            filename = clean_filename
 
             content_len = int(self.headers.get('Content-Length', 0))
             recv_dir = getattr(self.app, "iphone_received_dir", IPHONE_RECEIVED_DIR)
@@ -1995,7 +2125,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v4.8 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v4.9 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -2008,6 +2138,7 @@ class PCReceiverServer:
                 pass
 
     def _handle_control_connection(self, sock, addr):
+        transfer_id = None
         try:
             hdr_len_bytes = self._read_exact(sock, 4)
             manifest_len = struct.unpack("!I", hdr_len_bytes)[0]
@@ -2016,7 +2147,7 @@ class PCReceiverServer:
 
             transfer_id = manifest["transfer_id"]
             raw_filename = manifest.get("filename", f"received_{int(time.time())}")
-            clean_filename = os.path.basename(raw_filename)
+            clean_filename = sanitize_ntfs_filename(raw_filename)
             filesize = manifest.get("filesize", 0)
             total_chunks = manifest.get("total_chunks", 1)
 
@@ -2028,12 +2159,12 @@ class PCReceiverServer:
                 dest_path = os.path.join(PC_RECEIVED_DIR, f"{base} ({c}){ext}")
                 c += 1
 
-            with open(dest_path, "wb") as f_init:
+            part_path = dest_path + ".airbeam.part"
+
+            with open(part_path, "wb") as f_init:
                 if filesize > 0:
                     f_init.seek(filesize - 1)
                     f_init.write(b'\0')
-
-            file_handle = open(dest_path, "r+b")
 
             with self.transfers_lock:
                 self.active_transfers[transfer_id] = {
@@ -2041,10 +2172,11 @@ class PCReceiverServer:
                     "filename": os.path.basename(dest_path),
                     "filesize": filesize,
                     "dest_path": dest_path,
+                    "part_path": part_path,
                     "total_chunks": total_chunks,
                     "received_chunks": 0,
                     "bytes_received": 0,
-                    "file_handle": file_handle,
+                    "worker_handles": [],
                     "lock": threading.Lock(),
                     "start_time": time.time(),
                     "sender_ip": addr[0],
@@ -2071,8 +2203,27 @@ class PCReceiverServer:
                 sock.close()
             except Exception:
                 pass
+        finally:
+            if transfer_id:
+                with self.transfers_lock:
+                    transfer = self.active_transfers.pop(transfer_id, None)
+                if transfer:
+                    with transfer["lock"]:
+                        for wh in transfer.get("worker_handles", []):
+                            try:
+                                wh.close()
+                            except Exception:
+                                pass
+                    part_path = transfer.get("part_path")
+                    if part_path and os.path.exists(part_path) and not transfer["done_event"].is_set():
+                        try:
+                            os.remove(part_path)
+                        except Exception:
+                            pass
 
     def _handle_worker_connection(self, sock, addr):
+        worker_file = None
+        current_transfer_id = None
         try:
             while self.running:
                 hdr_bytes = bytearray(32)
@@ -2092,7 +2243,17 @@ class PCReceiverServer:
                 if not transfer:
                     break
 
-                rem_bytes = chunk_len
+                if worker_file is None or current_transfer_id != transfer_id:
+                    if worker_file:
+                        try:
+                            worker_file.close()
+                        except Exception:
+                            pass
+                    current_transfer_id = transfer_id
+                    worker_file = open(transfer["part_path"], "r+b", buffering=0)
+                    with transfer["lock"]:
+                        transfer["worker_handles"].append(worker_file)
+
                 payload = bytearray(chunk_len)
                 p_view = memoryview(payload)
                 pos = 0
@@ -2102,9 +2263,9 @@ class PCReceiverServer:
                         raise ConnectionResetError("Worker socket closed prematurely during chunk payload")
                     pos += r
 
-                with transfer["lock"]:
-                    transfer["file_handle"].seek(chunk_off)
-                    transfer["file_handle"].write(p_view)
+                # Lock-free parallel NTFS write with independent worker file pointer!
+                worker_file.seek(chunk_off)
+                worker_file.write(p_view)
 
                 sock.sendall(b"COK!")
 
@@ -2125,15 +2286,27 @@ class PCReceiverServer:
 
                 if done:
                     with transfer["lock"]:
-                        try:
-                            transfer["file_handle"].flush()
-                            transfer["file_handle"].close()
-                        except Exception:
-                            pass
+                        for wh in transfer["worker_handles"]:
+                            try:
+                                wh.flush()
+                                wh.close()
+                            except Exception:
+                                pass
+                        transfer["worker_handles"].clear()
+
+                    part_path = transfer["part_path"]
+                    dest_path = transfer["dest_path"]
+                    try:
+                        if os.path.exists(dest_path):
+                            os.remove(dest_path)
+                        os.replace(part_path, dest_path)
+                    except Exception as e:
+                        print(f"Error finalizing part file: {e}")
+
                     transfer["done_event"].set()
 
                     if hasattr(self.app_instance, "on_pc_receive_complete"):
-                        self.app_instance.after(0, lambda fn=fname, tb=tot_bytes, dur=elapsed, spd=speed, dp=transfer["dest_path"]:
+                        self.app_instance.after(0, lambda fn=fname, tb=tot_bytes, dur=elapsed, spd=speed, dp=dest_path:
                             self.app_instance.on_pc_receive_complete(fn, tb, dur, spd, dp)
                         )
                     with self.transfers_lock:
@@ -2145,6 +2318,11 @@ class PCReceiverServer:
             except Exception:
                 pass
         finally:
+            if worker_file:
+                try:
+                    worker_file.close()
+                except Exception:
+                    pass
             try:
                 sock.close()
             except Exception:
@@ -2538,11 +2716,12 @@ class ScrollableFrame(tk.Frame):
 class AirBeamSenderApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AirBeam v4.8 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title("AirBeam v4.9 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
 
+        self.session_node_id = SESSION_NODE_ID
         self.selected_files = []
         self.is_sending = False
         self.pause_event = threading.Event()
@@ -2607,7 +2786,7 @@ class AirBeamSenderApp(tk.Tk):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.4.8')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.4.9')
         except Exception:
             pass
 
@@ -3154,7 +3333,14 @@ class AirBeamSenderApp(tk.Tk):
         self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
         scrollbar.config(command=self.listbox_files.yview)
 
-        self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above to select files", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
+        if WINDND_AVAILABLE:
+            try:
+                windnd.hook_dropfiles(self.listbox_files, func=self._on_main_files_dropped)
+                self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Drag & drop files here or click '+ Add Files' above", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
+            except Exception:
+                self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above to select files", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
+        else:
+            self.lbl_total_size = tk.Label(files_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above to select files", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9))
         self.lbl_total_size.pack(anchor="w", pady=(6, 0))
 
         # Progress & Actions Card
@@ -3324,15 +3510,15 @@ class AirBeamSenderApp(tk.Tk):
         rx_action_bar.pack(fill="x")
 
         self.lbl_pc_received_summary = tk.Label(
-            rx_action_bar, text="📁 Received Folder: 'Received_From_PC'",
-            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+            rx_action_bar, text="📥 Received from PC: 0 file(s) (0 B)",
+            bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold")
         )
         self.lbl_pc_received_summary.pack(side="left")
 
-        btn_clear_pc_rx = ttk.Button(rx_action_bar, text="🧹 Clear Received", style="Secondary.TButton", command=self.clear_pc_received_folder)
+        btn_clear_pc_rx = ttk.Button(rx_action_bar, text="🧹 Clear Received PC Files", style="Secondary.TButton", command=self.clear_pc_received_folder)
         btn_clear_pc_rx.pack(side="right", padx=(4, 0))
 
-        btn_open_pc_rx = ttk.Button(rx_action_bar, text="📂 Open Received Folder", style="Primary.TButton", command=self.open_pc_received_folder)
+        btn_open_pc_rx = ttk.Button(rx_action_bar, text="📂 Open Received_From_PC Folder", style="Primary.TButton", command=self.open_pc_received_folder)
         btn_open_pc_rx.pack(side="right")
 
         # Real-time incoming transfers display
@@ -3536,10 +3722,23 @@ class AirBeamSenderApp(tk.Tk):
         self.listbox_pc_files.pack(fill="both", expand=True, padx=4, pady=4)
         pc_scrollbar.config(command=self.listbox_pc_files.yview)
 
-        self.lbl_pc_total_size = tk.Label(
-            send_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above",
-            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
-        )
+        if WINDND_AVAILABLE:
+            try:
+                windnd.hook_dropfiles(self.listbox_pc_files, func=self._on_pc_files_dropped)
+                self.lbl_pc_total_size = tk.Label(
+                    send_card, text="0 files selected (0 B) — Drag & drop files here or click '+ Add Files' above",
+                    bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+                )
+            except Exception:
+                self.lbl_pc_total_size = tk.Label(
+                    send_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above",
+                    bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+                )
+        else:
+            self.lbl_pc_total_size = tk.Label(
+                send_card, text="0 files selected (0 B) — Click '+ Add Files' or '+ Add Folder' above",
+                bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+            )
         self.lbl_pc_total_size.pack(anchor="w", pady=(6, 8))
 
         # Progress & Controls
@@ -3567,7 +3766,32 @@ class AirBeamSenderApp(tk.Tk):
         self.btn_cancel_pc = ttk.Button(pc_ctrl_frame, text="⏹ Cancel", style="Cancel.TButton", state="disabled", command=self.cancel_pc_transfer)
         self.btn_cancel_pc.pack(side="left", padx=4)
 
-        # 4. Zero-Install Web Mode Card (For PCs Without AirBeam)
+        # 4. Received Files History Card
+        self.pc_history_card = ttk.Frame(container, style="Card.TFrame", padding=14)
+        self.pc_history_card.pack(fill="x", padx=10, pady=(0, 10))
+
+        hist_top = tk.Frame(self.pc_history_card, bg="#1e293b")
+        hist_top.pack(fill="x", pady=(0, 6))
+        ttk.Label(hist_top, text="📥 Received PC Files History", style="CardHeader.TLabel").pack(side="left")
+        ttk.Label(hist_top, text="(Double-click any file to open/reveal)", style="CardBody.TLabel").pack(side="right")
+
+        hist_list_frame = tk.Frame(self.pc_history_card, bg="#0f172a")
+        hist_list_frame.pack(fill="x", expand=True)
+
+        hist_scroll = tk.Scrollbar(hist_list_frame)
+        hist_scroll.pack(side="right", fill="y")
+
+        self.listbox_pc_history = tk.Listbox(
+            hist_list_frame, height=4, bg="#0f172a", fg="#f8fafc",
+            selectbackground="#0284c7", selectforeground="#ffffff",
+            font=("Segoe UI", 9), bd=0, highlightthickness=0,
+            yscrollcommand=hist_scroll.set
+        )
+        self.listbox_pc_history.pack(fill="both", expand=True, padx=4, pady=4)
+        hist_scroll.config(command=self.listbox_pc_history.yview)
+        self.listbox_pc_history.bind("<Double-Button-1>", lambda e: self.open_selected_pc_received_file())
+
+        # 5. Zero-Install Web Mode Card (For PCs Without AirBeam)
         web_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         web_card.pack(fill="x", padx=10, pady=(0, 14))
 
@@ -3740,7 +3964,7 @@ class AirBeamSenderApp(tk.Tk):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         my_host = socket.gethostname()
-        msg = f"AIRBEAM_PC_PING|{my_host}|{self.local_ip}".encode("utf-8")
+        msg = f"AIRBEAM_PC_PING|{self.session_node_id}|{my_host}|{self.local_ip}".encode("utf-8")
         try:
             sock.sendto(msg, ("255.255.255.255", UDP_PORT))
             sock.sendto(msg, ("192.168.137.255", UDP_PORT))
@@ -3755,8 +3979,10 @@ class AirBeamSenderApp(tk.Tk):
         try:
             hotspot_clients = get_connected_hotspot_client_ips()
             now = time.time()
+            all_local = get_all_local_ips()
+            all_local.add(self.local_ip)
             for hip in hotspot_clients:
-                if hip != self.local_ip:
+                if hip not in all_local and not hip.startswith("127."):
                     self.discovered_pcs[hip] = {
                         "hostname": f"AirBeam Peer ({hip})",
                         "ip": hip,
@@ -3845,27 +4071,69 @@ class AirBeamSenderApp(tk.Tk):
         os.makedirs(PC_RECEIVED_DIR, exist_ok=True)
         try:
             os.startfile(PC_RECEIVED_DIR)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to open folder: {e}")
+        except Exception:
+            try:
+                subprocess.Popen(["explorer.exe", PC_RECEIVED_DIR])
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to open folder: {e}")
 
     def update_pc_received_summary(self):
         if not os.path.exists(PC_RECEIVED_DIR):
             return
-        files = os.listdir(PC_RECEIVED_DIR)
-        tot_sz = sum(os.path.getsize(os.path.join(PC_RECEIVED_DIR, f)) for f in files if os.path.isfile(os.path.join(PC_RECEIVED_DIR, f)))
+        files = [f for f in os.listdir(PC_RECEIVED_DIR) if not f.endswith(".part") and os.path.isfile(os.path.join(PC_RECEIVED_DIR, f))]
+        tot_sz = sum(os.path.getsize(os.path.join(PC_RECEIVED_DIR, f)) for f in files)
         if hasattr(self, "lbl_pc_received_summary"):
-            self.lbl_pc_received_summary.config(text=f"📁 Received: {len(files)} file(s) ({format_bytes(tot_sz)}) in 'Received_From_PC'")
+            self.lbl_pc_received_summary.config(text=f"📥 Received from PC: {len(files)} file(s) ({format_bytes(tot_sz)})")
+        if hasattr(self, "update_pc_received_history_ui"):
+            self.update_pc_received_history_ui()
+
+    def update_pc_received_history_ui(self):
+        if not hasattr(self, "listbox_pc_history"):
+            return
+        self.listbox_pc_history.delete(0, tk.END)
+        if not os.path.exists(PC_RECEIVED_DIR):
+            self.listbox_pc_history.insert(tk.END, "  (No files received from other PCs yet)")
+            return
+        files = [f for f in os.listdir(PC_RECEIVED_DIR) if not f.endswith(".part") and os.path.isfile(os.path.join(PC_RECEIVED_DIR, f))]
+        if not files:
+            self.listbox_pc_history.insert(tk.END, "  (No files received from other PCs yet)")
+            return
+        files.sort(key=lambda f: os.path.getmtime(os.path.join(PC_RECEIVED_DIR, f)), reverse=True)
+        for f in files:
+            fp = os.path.join(PC_RECEIVED_DIR, f)
+            sz = os.path.getsize(fp)
+            mtime = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(fp)))
+            self.listbox_pc_history.insert(tk.END, f"  📄 {f}  ({format_bytes(sz)})  —  {mtime}")
+
+    def open_selected_pc_received_file(self):
+        if not hasattr(self, "listbox_pc_history"):
+            return
+        sel = self.listbox_pc_history.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        files = [f for f in os.listdir(PC_RECEIVED_DIR) if not f.endswith(".part") and os.path.isfile(os.path.join(PC_RECEIVED_DIR, f))]
+        files.sort(key=lambda f: os.path.getmtime(os.path.join(PC_RECEIVED_DIR, f)), reverse=True)
+        if 0 <= idx < len(files):
+            target = os.path.join(PC_RECEIVED_DIR, files[idx])
+            try:
+                os.startfile(target)
+            except Exception:
+                try:
+                    subprocess.Popen(["explorer.exe", f"/select,{target}"])
+                except Exception:
+                    pass
 
     def clear_pc_received_folder(self):
         if not os.path.exists(PC_RECEIVED_DIR):
             messagebox.showinfo("Folder Empty", "The 'Received_From_PC' folder is already empty!")
             return
-        files = [os.path.join(PC_RECEIVED_DIR, f) for f in os.listdir(PC_RECEIVED_DIR) if os.path.isfile(os.path.join(PC_RECEIVED_DIR, f))]
+        files = [os.path.join(PC_RECEIVED_DIR, f) for f in os.listdir(PC_RECEIVED_DIR) if not f.endswith(".part") and os.path.isfile(os.path.join(PC_RECEIVED_DIR, f))]
         if not files:
             messagebox.showinfo("Folder Empty", "The 'Received_From_PC' folder is already empty!")
             return
         tot_sz = sum(os.path.getsize(f) for f in files)
-        if not messagebox.askyesno("Confirm Clear", f"Permanently delete all {len(files)} file(s) ({format_bytes(tot_sz)}) from 'Received_From_PC'?"):
+        if not messagebox.askyesno("Confirm Clear", f"Permanently delete all {len(files)} received file(s) ({format_bytes(tot_sz)}) from 'Received_From_PC'?"):
             return
         deleted = 0
         for f in files:
@@ -3876,6 +4144,40 @@ class AirBeamSenderApp(tk.Tk):
                 pass
         self.update_pc_received_summary()
         messagebox.showinfo("Cleared", f"Deleted {deleted} file(s) from 'Received_From_PC'.")
+
+    def _on_pc_files_dropped(self, files):
+        if not files:
+            return
+        for f in files:
+            path = f.decode('utf-8', errors='replace') if isinstance(f, bytes) else str(f)
+            path = os.path.abspath(path)
+            if os.path.isfile(path):
+                if path not in self.pc_selected_files:
+                    self.pc_selected_files.append(path)
+            elif os.path.isdir(path):
+                for root, _, filenames in os.walk(path):
+                    for fn in filenames:
+                        full = os.path.join(root, fn)
+                        if full not in self.pc_selected_files:
+                            self.pc_selected_files.append(full)
+        self.update_pc_file_listbox()
+
+    def _on_main_files_dropped(self, files):
+        if not files:
+            return
+        for f in files:
+            path = f.decode('utf-8', errors='replace') if isinstance(f, bytes) else str(f)
+            path = os.path.abspath(path)
+            if os.path.isfile(path):
+                if path not in self.selected_files:
+                    self.selected_files.append(path)
+            elif os.path.isdir(path):
+                for root, _, filenames in os.walk(path):
+                    for fn in filenames:
+                        full = os.path.join(root, fn)
+                        if full not in self.selected_files:
+                            self.selected_files.append(full)
+        self.refresh_file_list()
 
     def on_pc_receiver_ready(self, port, success, err=""):
         if hasattr(self, "lbl_pc_rx_badge"):
@@ -4102,7 +4404,7 @@ class AirBeamSenderApp(tk.Tk):
         # Header Info Card
         header_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         header_card.pack(fill="x", padx=10, pady=(6, 10))
-        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v4.8)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v4.9)", style="CardHeader.TLabel").pack(anchor="w")
         ttk.Label(header_card, text="Zero app installation required on iOS! Use Option 1 below for instant transfer over Home Wi-Fi, or Options 2 & 3 for direct router-bypass speeds (50–95+ MB/s).", style="CardBody.TLabel").pack(anchor="w", pady=(2, 0))
 
         # --- OPTION 1: Transfer Over Home Wi-Fi Router (Zero Hotspot Required) ---
@@ -4756,7 +5058,7 @@ class AirBeamSenderApp(tk.Tk):
                 except Exception as e:
                     messagebox.showerror("Firewall Error", f"Failed to run Fix-AirBeam-Firewall.bat: {e}")
         else:
-            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v4.8 folder.")
+            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v4.9 folder.")
 
     def toggle_connect_to_iphone_hotspot(self, target_state):
         if target_state:
@@ -5175,7 +5477,7 @@ class AirBeamSenderApp(tk.Tk):
                                 pass
 
                     # Broadcast PC-to-PC discovery announcement
-                    pc_ping = f"AIRBEAM_PC_PING|{socket.gethostname()}|{self.local_ip}".encode("utf-8")
+                    pc_ping = f"AIRBEAM_PC_PING|{self.session_node_id}|{socket.gethostname()}|{self.local_ip}".encode("utf-8")
                     sock.sendto(pc_ping, ("255.255.255.255", UDP_PORT))
                     sock.sendto(pc_ping, ("192.168.137.255", UDP_PORT))
                     if self.local_ip and "." in self.local_ip:
@@ -5188,13 +5490,22 @@ class AirBeamSenderApp(tk.Tk):
                     data, addr = sock.recvfrom(2048)
                     text = data.decode("utf-8", errors="ignore").strip()
 
+                    all_local = get_all_local_ips()
+                    all_local.add(self.local_ip)
+
                     if text.startswith("AIRBEAM_PC_PING"):
                         parts = text.split("|")
-                        peer_name = parts[1] if len(parts) > 1 else "AirBeam PC"
+                        if len(parts) > 2 and len(parts[1]) == 8:
+                            node_id = parts[1]
+                            peer_name = parts[2]
+                        else:
+                            node_id = None
+                            peer_name = parts[1] if len(parts) > 1 else "AirBeam PC"
                         peer_ip = addr[0]
-                        if peer_ip != self.local_ip and not peer_ip.startswith("127."):
+
+                        if node_id != self.session_node_id and peer_ip not in all_local and not peer_ip.startswith("127."):
                             self.discovered_pcs[peer_ip] = {"hostname": peer_name, "ip": peer_ip, "time": time.time()}
-                            pong = f"AIRBEAM_PC_PONG|{socket.gethostname()}|{self.local_ip}".encode("utf-8")
+                            pong = f"AIRBEAM_PC_PONG|{self.session_node_id}|{socket.gethostname()}|{self.local_ip}".encode("utf-8")
                             try:
                                 sock.sendto(pong, (peer_ip, UDP_PORT))
                             except Exception:
@@ -5203,9 +5514,15 @@ class AirBeamSenderApp(tk.Tk):
 
                     elif text.startswith("AIRBEAM_PC_PONG") or text.startswith("AIRBEAM_PC_ACK"):
                         parts = text.split("|")
-                        peer_name = parts[1] if len(parts) > 1 else "AirBeam PC"
+                        if len(parts) > 2 and len(parts[1]) == 8:
+                            node_id = parts[1]
+                            peer_name = parts[2]
+                        else:
+                            node_id = None
+                            peer_name = parts[1] if len(parts) > 1 else "AirBeam PC"
                         peer_ip = addr[0]
-                        if peer_ip != self.local_ip and not peer_ip.startswith("127."):
+
+                        if node_id != self.session_node_id and peer_ip not in all_local and not peer_ip.startswith("127."):
                             self.discovered_pcs[peer_ip] = {"hostname": peer_name, "ip": peer_ip, "time": time.time()}
                             self.after(0, self.update_discovered_pcs_ui)
 
@@ -5640,7 +5957,7 @@ class AirBeamSenderApp(tk.Tk):
             "parallel_streams": PARALLEL_STREAMS,
             "stripe_size_mb": DEFAULT_STRIPE_SIZE // (1024 * 1024),
             "chunk_slice_kb": CHUNK_SLICE_BYTES // 1024,
-            "status": "AirBeam v4.8 Ultra-Speed Multi-Stream Ready",
+            "status": "AirBeam v4.9 Ultra-Speed Multi-Stream Ready",
             "diagnostics": {
                 "router_bypassed": is_direct_hotspot,
                 "connection_mode_description": mode_desc,
