@@ -1,7 +1,7 @@
-# ⚡ AirBeam v4.7: Ultra-Speed Wireless Transfer
+# ⚡ AirBeam v4.8: Ultra-Speed Wireless Transfer
 ### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC, Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v4.7-0284c7?style=for-the-badge&logo=windows&logoColor=white)](setup-output/AirBeam-v4.7-Setup.exe?raw=true)
+[![Release](https://img.shields.io/badge/Release-v4.8-0284c7?style=for-the-badge&logo=windows&logoColor=white)](setup-output/AirBeam-v4.8-Setup.exe?raw=true)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v2.7-Receiver.apk?raw=true)
@@ -14,8 +14,8 @@
 
 | Package | Format | Size | Description | Download Link |
 | :--- | :--- | :--- | :--- | :--- |
-| **AirBeam Windows Installer** | `.exe` (Inno Setup) | **29.5 MB** | Recommended for Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v4.7-Setup.exe**](setup-output/AirBeam-v4.7-Setup.exe?raw=true) |
-| **AirBeam Portable Edition** | `.zip` (Standalone) | **38.2 MB** | Zero-install archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v4.7-Portable.zip**](setup-output/AirBeam-v4.7-Portable.zip?raw=true) |
+| **AirBeam Windows Installer** | `.exe` (Inno Setup) | **29.5 MB** | Recommended for Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v4.8-Setup.exe**](setup-output/AirBeam-v4.8-Setup.exe?raw=true) |
+| **AirBeam Portable Edition** | `.zip` (Standalone) | **38.2 MB** | Zero-install archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v4.8-Portable.zip**](setup-output/AirBeam-v4.8-Portable.zip?raw=true) |
 | **AirBeam Android Receiver** | `.apk` (Knox Signed) | **5.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Download AirBeam-v2.7-Receiver.apk**](release/AirBeam-v2.7-Receiver.apk?raw=true) |
 | **iPhone / iPad Web Portal** | Browser Link | *0 MB* | No app installation needed on iOS. Open Safari and connect over Home Wi-Fi or Windows 5 GHz Hotspot. | [📖 **View iOS Quick Start**](#3--iphone--ios-zero-install-web-portal) |
 
@@ -141,7 +141,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ## 🛠️ Quick Start Guide
 
 ### Windows PC
-1. Download [**AirBeam-v4.7-Setup.exe**](setup-output/AirBeam-v4.7-Setup.exe?raw=true) and run the installer (or extract [**AirBeam-v4.7-Portable.zip**](setup-output/AirBeam-v4.7-Portable.zip?raw=true)).
+1. Download [**AirBeam-v4.8-Setup.exe**](setup-output/AirBeam-v4.8-Setup.exe?raw=true) and run the installer (or extract [**AirBeam-v4.8-Portable.zip**](setup-output/AirBeam-v4.8-Portable.zip?raw=true)).
 2. Launch AirBeam from the Desktop shortcut or Start Menu.
 3. Select your desired tab:
    - **Beam to Android**: Select files and click **`⚡ Beam Files`**.
@@ -165,8 +165,8 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ```
 AirBeam/
 ├── setup-output/
-│   ├── AirBeam-v4.7-Setup.exe        # Standalone Windows Installer (29.5 MB)
-│   └── AirBeam-v4.7-Portable.zip      # Portable Standalone Archive (38.2 MB)
+│   ├── AirBeam-v4.8-Setup.exe        # Standalone Windows Installer (29.5 MB)
+│   └── AirBeam-v4.8-Portable.zip      # Portable Standalone Archive (38.2 MB)
 ├── desktop-sender/
 │   ├── sender.py                      # Core Python GUI & Multi-Stream Engine
 │   └── assets/                        # High-resolution icons and logos
@@ -175,7 +175,7 @@ AirBeam/
 │   └── AirBeam-v2.7-Receiver.apk      # Knox V1+V2 signed Android receiver APK
 ├── Fix-AirBeam-Firewall.bat           # Self-elevating Windows Firewall configurator
 ├── Launch-AirBeam.bat                 # Universal launcher script
-├── Launch-AirBeam-v4.7.bat            # Versioned launcher script
+├── Launch-AirBeam-v4.8.bat            # Versioned launcher script
 ├── AirBeam-Setup.iss                  # Inno Setup 6 compiler configuration
 ├── create_shortcut.ps1                # Desktop shortcut generator
 ├── README.md                          # Master documentation & benchmark guide
