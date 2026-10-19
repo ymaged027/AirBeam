@@ -1,12 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
+datas = [
+    ('C:/Users/youssef/WirelessFileTransfer-v3.0/desktop-sender/assets', 'assets'),
+    ('C:/Users/youssef/WirelessFileTransfer-v3.0/release/AirBeam-v2.7-Receiver.apk', 'release'),
+    ('C:/Users/youssef/WirelessFileTransfer-v3.0/Fix-AirBeam-Firewall.bat', '.')
+]
+datas += collect_data_files('tkinterdnd2')
+
+hiddenimports = collect_submodules('tkinterdnd2')
 
 a = Analysis(
     ['C:/Users/youssef/WirelessFileTransfer-v3.0/desktop-sender/sender.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:/Users/youssef/WirelessFileTransfer-v3.0/desktop-sender/assets', 'assets'), ('C:/Users/youssef/WirelessFileTransfer-v3.0/release/AirBeam-v2.7-Receiver.apk', 'release'), ('C:/Users/youssef/WirelessFileTransfer-v3.0/Fix-AirBeam-Firewall.bat', '.')],
-    hiddenimports=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

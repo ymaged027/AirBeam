@@ -944,3 +944,40 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Updated `README.md` badges, download matrix, and architecture diagram.
    - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
 
+
+
+---
+
+## 29. AirBeam v5.0 — Setup Installer, Portable ZIP & Android APK Production Build
+
+### User Prompts:
+> *"update the setup and uptdate the apk also"*
+
+### Engineering Actions & Deliverables:
+1. **Android Receiver APK Build & Packaging (`android-app/`):**
+   - Cleanly assembled both release and debug variants using Gradle 8.5 with Java 17 toolchain:
+     - `gradlew.bat assembleRelease` executed successfully.
+     - `gradlew.bat assembleDebug` executed successfully.
+   - Synchronized newly built production Knox-signed APK (`AirBeam-v2.7-Receiver.apk` — 4.7 MB):
+     - Placed into root directory (`C:\Users\youssef\WirelessFileTransfer-v3.0\AirBeam-v2.7-Receiver.apk`).
+     - Placed into `release\` directory (`release\AirBeam-v2.7-Receiver.apk` and `release\AirBeam-Receiver.apk`).
+     - Tested locate_apk resolution path in `desktop-sender/sender.py` and embedded APK HTTP download server.
+
+2. **Standalone PyInstaller Build (`AirBeam.spec`):**
+   - Enhanced `AirBeam.spec` with `collect_data_files('tkinterdnd2')` and `collect_submodules('tkinterdnd2')` to bundle native Win32 OLE drag-and-drop binaries and Tcl scripts into the standalone distribution.
+   - Successfully compiled `sender.py` into `dist\AirBeam\AirBeam.exe` (6.0 MB binary with embedded runtime, TkinterDnD2, Pillow, QR code engine, assets, and firewall configurator).
+
+3. **Inno Setup 6 Production Installer (`AirBeam-Setup.iss`):**
+   - Updated application version macros to `5.0` (`#define MyAppVersion "5.0"`) and output filename to `AirBeam-v5.0-Setup`.
+   - Successfully compiled with `ISCC.exe` into `setup-output\AirBeam-v5.0-Setup.exe` (28.9 MB, LZMA2/ultra64 compression).
+   - Configures automatic user-level installation to `{localappdata}\Programs\AirBeam` (no UAC required), Start Menu & Desktop shortcuts, and firewall rules for ports 8090, 8080, 7777, 8888 (TCP) and 7778 (UDP).
+
+4. **Portable Standalone Distribution Archive (`create_portable_zip.ps1`):**
+   - Updated PowerShell script target to `setup-output\AirBeam-v5.0-Portable.zip`.
+   - Generated `AirBeam-v5.0-Portable.zip` (38.1 MB, optimal compression) containing full standalone AirBeam distribution.
+   - Removed superseded v4.8 binaries from `setup-output/` to keep repository lean.
+
+5. **Documentation & Release Tracking (`README.md`):**
+   - Updated release badges, download tables, and repository trees to reference `AirBeam-v5.0-Setup.exe` and `AirBeam-v5.0-Portable.zip`.
+   - Updated APK download size to 4.7 MB.
+   - Confirmed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
