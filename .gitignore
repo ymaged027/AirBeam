@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Build Artifacts
+build/
+dist/
+setup-output/
+*.spec.bak
+
+# Android Build & Gradle Artifacts
+android-app/.gradle/
+android-app/app/build/
+android-app/.idea/
+android-app/*.iml
+android-app/local.properties
+.gradle/
+
+# Legacy interim APK builds (v2.7 in release/ is tracked)
+AirBeam-v2.[0-6]*.apk
+
+# Runtime Received Folders & Logs
+Received_From_PC/
+Received_From_iPhone/
+*.log
+last_home_wifi.txt
+last_transfer_stats.json
+AirBeam_Diagnostic_Report.json
+
+# IDE & OS Files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
