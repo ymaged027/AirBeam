@@ -175,11 +175,8 @@ AirBeam/
 ├── release/
 │   └── AirBeam-v5.0-Receiver.apk      # Knox V1+V2 signed Android receiver APK
 ├── Fix-AirBeam-Firewall.bat           # Self-elevating Windows Firewall configurator
-├── Launch-AirBeam.bat                 # Universal launcher script
+├── Launch-AirBeam.bat                 # Universal launcher script (forwards CLI arguments)
 ├── Launch-AirBeam-v5.1.bat            # Production launcher script (v5.1)
-├── Launch-AirBeam-v5.0.bat            # Production launcher script (v5.0)
-├── Launch-AirBeam-v4.9.bat            # Compatibility launcher script
-├── Launch-AirBeam-v4.7.bat            # Compatibility launcher script
 ├── AirBeam-Setup.iss                  # Inno Setup 6 compiler configuration
 ├── create_shortcut.ps1                # Desktop shortcut generator
 ├── README.md                          # Master documentation & benchmark guide

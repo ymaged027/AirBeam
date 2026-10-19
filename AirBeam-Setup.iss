@@ -2,7 +2,7 @@
 ; AirBeam v5.0 Professional Setup Installer
 
 #define MyAppName "AirBeam"
-#define MyAppVersion "5.0"
+#define MyAppVersion "5.1"
 #define MyAppPublisher "AirBeam Wireless"
 #define MyAppExeName "AirBeam.exe"
 
@@ -17,7 +17,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output
-OutputBaseFilename=AirBeam-v5.0-Setup
+OutputBaseFilename=AirBeam-v5.1-Setup
 SetupIconFile=C:\Users\youssef\WirelessFileTransfer-v3.0\desktop-sender\assets\airbeam.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

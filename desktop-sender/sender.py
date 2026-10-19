@@ -3625,16 +3625,10 @@ class AirBeamSenderApp(BaseTkApp):
                 os.path.join(r, "AirBeam-v5.1-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.0-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.0-Receiver.apk"),
+                os.path.join(r, "release", "AirBeam-Receiver.apk"),
+                os.path.join(r, "AirBeam-Receiver.apk"),
                 os.path.join(r, "android-app", "app", "build", "outputs", "apk", "release", "AirBeam-v5.0-Receiver.apk"),
                 os.path.join(r, "android-app", "app", "build", "outputs", "apk", "debug", "AirBeam-v5.0-Receiver.apk"),
-                os.path.join(r, "release", "AirBeam-v2.7-Receiver.apk"),
-                os.path.join(r, "AirBeam-v2.7-Receiver.apk"),
-                os.path.join(r, "android-app", "app", "build", "outputs", "apk", "release", "AirBeam-v2.7-Receiver.apk"),
-                os.path.join(r, "android-app", "app", "build", "outputs", "apk", "debug", "AirBeam-v2.7-Receiver.apk"),
-                os.path.join(r, "release", "AirBeam-v2.6-Receiver.apk"),
-                os.path.join(r, "AirBeam-v2.6-Receiver.apk"),
-                os.path.join(r, "release", "AirBeam-v2.5-Receiver.apk"),
-                os.path.join(r, "AirBeam-v2.5-Receiver.apk"),
             ])
         for p in candidates:
             if os.path.exists(p):

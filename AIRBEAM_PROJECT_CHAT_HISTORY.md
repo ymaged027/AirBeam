@@ -1089,9 +1089,45 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Automatically stages files and unpacked folders into the active tab's queue (Android, PC to PC, or iPhone/iOS) and updates the UI summary.
    - Secondary process receives `ACK_OK` and exits immediately with `sys.exit(0)`, completely avoiding duplicate GUI instances.
 
-5. **Verification & Cleanup**:
+5. **Verification**:
    - Verified end-to-end forward-and-queue IPC test across separate subprocesses.
    - Tested syntax and byte-compilation via `python -m py_compile desktop-sender/sender.py`.
    - Proper socket and mutex cleanup in `on_window_close()`.
-   - Guaranteed `C:\Users\youssef\WirelessFileTransfer` (v2.7) remains 100% untouched.
+
+---
+
+## 33. Obsolete Version Cleanup: v2.7 Folder Deletion & Legacy Artifact Pruning
+
+### User Prompt:
+> *"clean after you finish clean the old version and delete version 2.7 folder and update the .md files"*
+
+### Detailed Technical Solutions & Deliverables:
+
+1. **Complete Deletion of Legacy Version 2.7 Folder**:
+   - Safely deleted `C:\Users\youssef\WirelessFileTransfer` (the v2.7 codebase) entirely from disk via recursive removal.
+   - Verified via `Test-Path` returning `False`.
+
+2. **Pruning of Legacy Launch Scripts (`C:\Users\youssef\WirelessFileTransfer-v3.0`)**:
+   - Removed obsolete compatibility launchers from Git and filesystem:
+     - `Launch-AirBeam-v4.7.bat`
+     - `Launch-AirBeam-v4.9.bat`
+     - `Launch-AirBeam-v5.0.bat`
+   - Active launchers retained: `Launch-AirBeam-v5.1.bat` (production v5.1) and `Launch-AirBeam.bat` (universal launcher with `%*` argument forwarding).
+
+3. **Pruning of Legacy Android Receiver APKs & Presentations**:
+   - Removed legacy `AirBeam-v2.7-Receiver.apk` from project root and `release/AirBeam-v2.7-Receiver.apk`.
+   - Pruned untracked legacy binaries `release/AirBeam-v2.1` through `release/AirBeam-v2.6`.
+   - Removed legacy `AirBeam_V2.7_Presentation_and_Architecture.pdf` from project root and Windows Desktop.
+   - Retained active production binaries: `AirBeam-v5.0-Receiver.apk` (Knox dual-signed) and generic fallback `release/AirBeam-Receiver.apk`.
+
+4. **Codebase & Build Specification Alignment**:
+   - **`desktop-sender/sender.py`**: Cleaned `locate_apk()` candidate list to eliminate dead `v2.x` paths and include `AirBeam-Receiver.apk` fallback.
+   - **`AirBeam.spec`**: Updated PyInstaller bundling datas to bundle `AirBeam-Receiver.apk` in place of `v2.7`.
+   - **`AirBeam-Setup.iss`**: Updated Inno Setup configuration version definitions to `v5.1`.
+
+5. **Documentation & Project History Updates**:
+   - Updated `README.md` repository structure tree to reflect the pruned launcher scripts and current state.
+   - Created comprehensive `AIRBEAM_V5.1_REPORT.md` documenting v5.1 bug fixes, ease-of-use upgrades, and single-instance IPC architecture.
+   - Synchronized all documentation across the repository.
+
 
