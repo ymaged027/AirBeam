@@ -22,6 +22,8 @@ AirBeam-v2.[0-6]*.apk
 # Runtime Received Folders & Logs
 Received_From_PC/
 Received_From_iPhone/
+Received_From_Android/
+temp_staged_zips/
 *.log
 last_home_wifi.txt
 last_transfer_stats.json

@@ -20,6 +20,7 @@ else:
 
 LOG_FILE_PATH = os.path.join(APP_ROOT, "airbeam_sender.log")
 LAST_HOME_WIFI_FILE = os.path.join(APP_ROOT, "last_home_wifi.txt")
+TEMP_STAGED_ZIPS_DIR = os.path.join(APP_ROOT, "temp_staged_zips")
 
 class SafeLogStream:
     def __init__(self, filepath):
@@ -103,7 +104,7 @@ import uuid
 import zipfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageOps
 import qrcode
 import ctypes
 from ctypes import wintypes
@@ -342,6 +343,7 @@ def package_folder_to_zip(folder_path: str, status_cb=None) -> Optional[str]:
     """
     Packages a directory into a fast, uncompressed (.zip) archive using ZIP_STORED.
     Preserves the full folder hierarchy and relative subdirectories without compression bottleneck.
+    Saves archives to the isolated TEMP_STAGED_ZIPS_DIR folder.
     """
     if not folder_path or not os.path.isdir(folder_path):
         return None
@@ -350,9 +352,13 @@ def package_folder_to_zip(folder_path: str, status_cb=None) -> Optional[str]:
         folder_name = os.path.basename(folder_path.rstrip("\\/"))
         if not folder_name:
             folder_name = "archive"
-        staging_dir = os.path.join(tempfile.gettempdir(), "AirBeam_Staging")
+        staging_dir = TEMP_STAGED_ZIPS_DIR
         os.makedirs(staging_dir, exist_ok=True)
         zip_path = os.path.join(staging_dir, f"{folder_name}.zip")
+        counter = 1
+        while os.path.exists(zip_path):
+            zip_path = os.path.join(staging_dir, f"{folder_name} ({counter}).zip")
+            counter += 1
 
         if status_cb:
             try:
@@ -1649,7 +1655,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.2 • Web Portal</title>
+    <title>AirBeam v5.3 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1887,7 +1893,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.2</h1>
+        <h1><span>⚡</span> AirBeam v5.3</h1>
         <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -2241,9 +2247,9 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
                 xhr.onerror = () => reject(new Error("Network upload error"));
 
-                const isAndroid = window.location.search && window.location.search.includes('source=android');
-                const srcQuery = isAndroid ? '&source=android' : '';
-                const uploadUrl = '/upload?filename=' + encodeURIComponent(file.name) + srcQuery;
+                let uploadUrl = '/upload' + (window.location.search || '');
+                const sep = uploadUrl.includes('?') ? '&' : '?';
+                uploadUrl += sep + 'filename=' + encodeURIComponent(file.name);
                 xhr.open('POST', uploadUrl, true);
                 xhr.send(file);
             });
@@ -2274,10 +2280,11 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             pass
 
     def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        parsed = urllib.parse.urlsplit(self.path)
+        clean_path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
-        if path in ('/', '/index.html'):
+        if clean_path in ('/', '/index.html'):
             content = IOS_HTML_TEMPLATE.encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -2287,7 +2294,7 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(content)
             return
 
-        elif path == '/api/files':
+        elif clean_path == '/api/files':
             files_list = []
             selected = getattr(self.app, "selected_files", [])
             img_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
@@ -2312,21 +2319,37 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        elif path.startswith('/thumb/'):
+        elif clean_path.startswith('/thumb/'):
             try:
-                idx_str = path[len('/thumb/'):]
+                idx_str = clean_path[len('/thumb/'):]
                 idx = int(idx_str)
                 selected = getattr(self.app, "selected_files", [])
                 if idx < 0 or idx >= len(selected):
-                    self.send_error(404, "Thumbnail index out of range")
+                    self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
                     return
                 filepath = selected[idx]
                 if not os.path.exists(filepath):
-                    self.send_error(404, "File not found")
+                    self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
                     return
 
                 with Image.open(filepath) as img:
-                    img = img.convert('RGB')
+                    try:
+                        img = ImageOps.exif_transpose(img)
+                    except Exception:
+                        pass
+
+                    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                        bg = Image.new("RGB", img.size, (15, 23, 42))  # matches #0f172a dark card background
+                        rgba = img.convert("RGBA")
+                        bg.paste(rgba, mask=rgba.split()[3])
+                        img = bg
+                    elif img.mode != "RGB":
+                        img = img.convert("RGB")
+
                     img.thumbnail((120, 120))
                     bio = io.BytesIO()
                     img.save(bio, format='JPEG', quality=80)
@@ -2340,11 +2363,22 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(thumb_data)
                 return
+            except (IndexError, ValueError, OSError, FileNotFoundError):
+                try:
+                    self.send_response(404)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                except Exception:
+                    pass
+                return
             except Exception as e:
-                self.send_error(500, f"Thumbnail generation error: {e}")
+                try:
+                    self.send_error(500, f"Thumbnail generation error: {e}")
+                except Exception:
+                    pass
                 return
 
-        elif path == '/api/clipboard':
+        elif clean_path == '/api/clipboard':
             text = self.app.get_clipboard_safe()
             data = json.dumps({"text": text or ""}).encode('utf-8')
             self.send_response(200)
@@ -2355,9 +2389,9 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        elif path.startswith('/download/'):
+        elif clean_path.startswith('/download/'):
             try:
-                idx_str = path[len('/download/'):]
+                idx_str = clean_path[len('/download/'):]
                 idx = int(idx_str)
                 selected = getattr(self.app, "selected_files", [])
                 if idx < 0 or idx >= len(selected):
@@ -2419,7 +2453,7 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             except Exception:
                 return
 
-        elif path == '/download-all.zip':
+        elif clean_path == '/download-all.zip':
             try:
                 selected = [f for f in getattr(self.app, "selected_files", []) if os.path.exists(f)]
                 if not selected:
@@ -2454,11 +2488,11 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+        parsed = urllib.parse.urlsplit(self.path)
+        clean_path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
-        if path == '/upload':
-            query = urllib.parse.parse_qs(parsed.query)
+        if clean_path == '/upload':
             raw_filename = query.get('filename', ['upload.bin'])[0]
             clean_filename = sanitize_ntfs_filename(urllib.parse.unquote(raw_filename))
             if not clean_filename:
@@ -2467,9 +2501,17 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
 
             content_len = int(self.headers.get('Content-Length', 0))
 
-            # Detect whether source is Android (query parameter or User-Agent)
-            user_agent = self.headers.get('User-Agent', '')
-            is_android = (query.get('source', [''])[0].lower() == 'android') or ('Android' in user_agent)
+            # Detect whether sender is Android by checking three signals in order:
+            # 1. query.get("source", [""])[0].lower() == "android"
+            # 2. "source=android" in (self.headers.get("Referer") or "").lower()
+            # 3. "android" in (self.headers.get("User-Agent") or "").lower()
+            ref = (self.headers.get("Referer") or "").lower()
+            ua = (self.headers.get("User-Agent") or "").lower()
+            is_android = (
+                query.get("source", [""])[0].lower() == "android"
+                or "source=android" in ref
+                or "android" in ua
+            )
 
             recv_dir = getattr(self.app, "android_received_dir", ANDROID_RECEIVED_DIR) if is_android else getattr(self.app, "iphone_received_dir", IPHONE_RECEIVED_DIR)
             os.makedirs(recv_dir, exist_ok=True)
@@ -2541,7 +2583,7 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 self.send_error(500, f"Upload error: {e}")
                 return
 
-        elif path == '/api/clipboard':
+        elif clean_path == '/api/clipboard':
             content_len = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_len).decode('utf-8', errors='replace')
             try:
@@ -2696,7 +2738,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.2 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.3 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -3301,7 +3343,8 @@ class ScrollableFrame(tk.Frame):
 class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
-        self.title("AirBeam v5.2 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.root = self
+        self.title("AirBeam v5.3 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3309,6 +3352,7 @@ class AirBeamSenderApp(BaseTkApp):
         self._is_alive = True
         self.session_node_id = SESSION_NODE_ID
         self.selected_files = []
+        self._temp_folder_zips: Set[str] = set()
         self.is_sending = False
         self.pause_event = threading.Event()
         self.pause_event.set()
@@ -3378,7 +3422,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.2')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.3')
         except Exception:
             pass
 
@@ -3714,6 +3758,48 @@ class AirBeamSenderApp(BaseTkApp):
                 messagebox.showerror("Error", "Failed to register context menu entry.")
         self.update_context_menu_button_state()
 
+    def cleanup_temp_zip(self, path: str):
+        """
+        Safely removes a temporary folder .zip created by package_folder_to_zip.
+        Strict Guardrail:
+        Only deletes if path is registered in self._temp_folder_zips AND resides within TEMP_STAGED_ZIPS_DIR.
+        Ensures the file is not currently in selected_files or pc_selected_files before deleting.
+        """
+        if not path or not isinstance(path, str):
+            return
+        try:
+            norm_p = os.path.normcase(os.path.abspath(path))
+            norm_temp_dir = os.path.normcase(os.path.abspath(TEMP_STAGED_ZIPS_DIR))
+
+            # Check if in tracked temp folder zips
+            tracked = getattr(self, "_temp_folder_zips", set())
+            is_tracked = (path in tracked) or any(os.path.normcase(os.path.abspath(x)) == norm_p for x in tracked)
+            if not is_tracked:
+                return
+
+            # Verify it resides within TEMP_STAGED_ZIPS_DIR
+            common = os.path.commonpath([norm_p, norm_temp_dir])
+            if common != norm_temp_dir:
+                return
+
+            # Check that it's no longer present in any active queue
+            in_selected = any(os.path.normcase(os.path.abspath(f)) == norm_p for f in getattr(self, "selected_files", []))
+            in_pc_selected = any(os.path.normcase(os.path.abspath(f)) == norm_p for f in getattr(self, "pc_selected_files", []))
+            if in_selected or in_pc_selected:
+                return
+
+            # Discard from tracking set
+            if hasattr(self, "_temp_folder_zips"):
+                self._temp_folder_zips.discard(path)
+                to_discard = [x for x in self._temp_folder_zips if os.path.normcase(os.path.abspath(x)) == norm_p]
+                for x in to_discard:
+                    self._temp_folder_zips.discard(x)
+
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as e:
+            print(f"cleanup_temp_zip exception for {path}: {e}")
+
     def remove_selected_file(self):
         if getattr(self, "is_sending", False):
             return
@@ -3737,16 +3823,20 @@ class AirBeamSenderApp(BaseTkApp):
             target_lb = self.listbox_ios_files
             sel = list(self.listbox_ios_files.curselection())
 
+        removed_paths = []
         if not sel:
             if self.selected_files:
-                self.selected_files.pop()
+                removed_paths.append(self.selected_files.pop())
         else:
             for idx in sorted(sel, reverse=True):
                 if 0 <= idx < len(self.selected_files):
-                    self.selected_files.pop(idx)
+                    removed_paths.append(self.selected_files.pop(idx))
 
         self.refresh_file_list()
         self.update_ios_files_summary()
+
+        for p in removed_paths:
+            self.cleanup_temp_zip(p)
 
         if target_lb and target_lb.winfo_exists() and self.selected_files:
             next_idx = min(sel[0], len(self.selected_files) - 1) if sel else 0
@@ -3757,15 +3847,19 @@ class AirBeamSenderApp(BaseTkApp):
         if getattr(self, "is_pc_sending", False):
             return
         sel = list(self.listbox_pc_files.curselection()) if hasattr(self, "listbox_pc_files") else []
+        removed_paths = []
         if not sel:
             if self.pc_selected_files:
-                self.pc_selected_files.pop()
+                removed_paths.append(self.pc_selected_files.pop())
         else:
             for idx in sorted(sel, reverse=True):
                 if 0 <= idx < len(self.pc_selected_files):
-                    self.pc_selected_files.pop(idx)
+                    removed_paths.append(self.pc_selected_files.pop(idx))
 
         self.update_pc_file_listbox()
+
+        for p in removed_paths:
+            self.cleanup_temp_zip(p)
 
         if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists() and self.pc_selected_files:
             next_idx = min(sel[0], len(self.pc_selected_files) - 1) if sel else 0
@@ -3819,6 +3913,70 @@ class AirBeamSenderApp(BaseTkApp):
     def get_best_home_wifi_profile(self) -> Optional[str]:
         return get_best_home_wifi_profile(app_instance=self)
 
+    def _stage_folder_async(self, folder_path: str, target: str = "main"):
+        """
+        Packages a folder into a fast uncompressed .zip archive inside a background daemon thread,
+        keeping the GUI 100% responsive, updating status labels live, and marshaling the result
+        back to the Tkinter UI thread.
+        """
+        if not folder_path or not os.path.isdir(folder_path):
+            return
+
+        folder_name = os.path.basename(os.path.abspath(folder_path).rstrip("\\/"))
+        if not folder_name:
+            folder_name = "archive"
+
+        def update_status(text: str):
+            def _apply():
+                if not getattr(self, "_is_alive", True):
+                    return
+                if target == "pc":
+                    status_lbl = getattr(self, "lbl_pc_total_size", None)
+                    if status_lbl and status_lbl.winfo_exists():
+                        status_lbl.config(text=text)
+                else:
+                    status_lbl = getattr(self, "lbl_total_size", None)
+                    status_ios = getattr(self, "lbl_ios_total_size", None)
+                    if status_lbl and status_lbl.winfo_exists():
+                        status_lbl.config(text=text)
+                    if status_ios and status_ios.winfo_exists():
+                        status_ios.config(text=text)
+            try:
+                self.after(0, _apply)
+            except Exception:
+                pass
+
+        update_status(f"📦 Packaging folder '{folder_name}'...")
+
+        def _worker():
+            zip_path = package_folder_to_zip(folder_path, status_cb=update_status)
+            if not zip_path:
+                update_status(f"⚠️ Failed to package '{folder_name}'")
+                return
+
+            def _on_finish():
+                if not getattr(self, "_is_alive", True):
+                    return
+                if hasattr(self, "_temp_folder_zips"):
+                    self._temp_folder_zips.add(zip_path)
+
+                if target == "pc":
+                    if zip_path not in self.pc_selected_files:
+                        self.pc_selected_files.append(zip_path)
+                    self.update_pc_file_listbox()
+                else:
+                    if zip_path not in self.selected_files:
+                        self.selected_files.append(zip_path)
+                    self.refresh_file_list()
+                    self.update_ios_files_summary()
+
+            try:
+                self.after(0, _on_finish)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, name=f"ZipFolder-{folder_name}", daemon=True).start()
+
     def on_global_files_dropped(self, files):
         """Dispatches dropped files anywhere in the app to the active tab's file queue."""
         if not files:
@@ -3869,6 +4027,20 @@ class AirBeamSenderApp(BaseTkApp):
             cleanup_airbeam_wifi_on_exit(app_instance=self)
         except Exception:
             pass
+        # Clean up temporary .zip archives created during this session
+        try:
+            if hasattr(self, "_temp_folder_zips"):
+                norm_temp_dir = os.path.normcase(os.path.abspath(TEMP_STAGED_ZIPS_DIR))
+                for p in list(self._temp_folder_zips):
+                    try:
+                        norm_p = os.path.normcase(os.path.abspath(p))
+                        if os.path.commonpath([norm_p, norm_temp_dir]) == norm_temp_dir and os.path.exists(p):
+                            os.remove(p)
+                    except Exception:
+                        pass
+                self._temp_folder_zips.clear()
+        except Exception:
+            pass
         try:
             self.destroy()
         except Exception:
@@ -3884,6 +4056,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.3-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.3-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.2-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.2-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.1-Receiver.apk"),
@@ -4199,7 +4373,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_app_brand = tk.Label(
             top_bar,
-            text="⚡ AirBeam v5.2  |  Ultra-Speed Cross-Platform Wireless Transfer",
+            text="⚡ AirBeam v5.3  |  Ultra-Speed Cross-Platform Wireless Transfer",
             bg="#0f172a",
             fg="#38bdf8",
             font=("Segoe UI", 10, "bold")
@@ -5017,19 +5191,14 @@ class AirBeamSenderApp(BaseTkApp):
     def add_pc_folder(self):
         folder = filedialog.askdirectory(title="Select folder to beam to PC")
         if folder:
-            status_lbl = getattr(self, "lbl_pc_total_size", None)
-            folder_name = os.path.basename(folder)
-            if status_lbl and status_lbl.winfo_exists():
-                status_lbl.config(text=f"📦 Packaging folder '{folder_name}' into fast archive...")
-                self.update_idletasks()
-            zip_path = package_folder_to_zip(folder)
-            if zip_path and zip_path not in self.pc_selected_files:
-                self.pc_selected_files.append(zip_path)
-            self.update_pc_file_listbox()
+            self._stage_folder_async(folder, target="pc")
 
     def clear_pc_files(self):
+        old_files = list(self.pc_selected_files)
         self.pc_selected_files.clear()
         self.update_pc_file_listbox()
+        for f in old_files:
+            self.cleanup_temp_zip(f)
 
     def update_pc_file_listbox(self):
         if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
@@ -5317,7 +5486,6 @@ class AirBeamSenderApp(BaseTkApp):
     def _on_pc_files_dropped(self, files):
         if not files:
             return
-        status_lbl = getattr(self, "lbl_pc_total_size", None)
         for f in files:
             path = f.decode('utf-8', errors='replace') if isinstance(f, bytes) else str(f)
             path = os.path.normpath(os.path.abspath(path))
@@ -5325,20 +5493,12 @@ class AirBeamSenderApp(BaseTkApp):
                 if path not in self.pc_selected_files:
                     self.pc_selected_files.append(path)
             elif os.path.isdir(path):
-                folder_name = os.path.basename(path)
-                if status_lbl and status_lbl.winfo_exists():
-                    status_lbl.config(text=f"📦 Packaging dropped folder '{folder_name}'...")
-                    self.update_idletasks()
-                zip_path = package_folder_to_zip(path)
-                if zip_path and zip_path not in self.pc_selected_files:
-                    self.pc_selected_files.append(zip_path)
+                self._stage_folder_async(path, target="pc")
         self.update_pc_file_listbox()
 
     def _on_main_files_dropped(self, files):
         if not files:
             return
-        status_lbl = getattr(self, "lbl_total_size", None)
-        status_ios = getattr(self, "lbl_ios_total_size", None)
         for f in files:
             path = f.decode('utf-8', errors='replace') if isinstance(f, bytes) else str(f)
             path = os.path.normpath(os.path.abspath(path))
@@ -5346,16 +5506,7 @@ class AirBeamSenderApp(BaseTkApp):
                 if path not in self.selected_files:
                     self.selected_files.append(path)
             elif os.path.isdir(path):
-                folder_name = os.path.basename(path)
-                msg = f"📦 Packaging dropped folder '{folder_name}'..."
-                if status_lbl and status_lbl.winfo_exists():
-                    status_lbl.config(text=msg)
-                if status_ios and status_ios.winfo_exists():
-                    status_ios.config(text=msg)
-                self.update_idletasks()
-                zip_path = package_folder_to_zip(path)
-                if zip_path and zip_path not in self.selected_files:
-                    self.selected_files.append(zip_path)
+                self._stage_folder_async(path, target="main")
         self.refresh_file_list()
         self.update_ios_files_summary()
 
@@ -5545,12 +5696,12 @@ class AirBeamSenderApp(BaseTkApp):
         self.generate_qr_code(apk_url)
 
         instructions = (
-            "AirBeam v5.2 Update Features:\n"
-            "• Two-Way Android Transfer: Tablet can beam files/photos back to PC via high-speed Web Portal.\n"
-            "• Preserved Folder Hierarchy: Dropped and right-clicked folders staged as fast ZIP_STORED archives.\n"
-            "• Visual Image Thumbnails: Web Portal previews staged images before downloading.\n"
-            "• Free Disk Space Guard: Receiver checks free storage before accepting transfers.\n"
-            "• Double-Click Preview & Ctrl+A: Instantly preview staged files and select all with keyboard."
+            "AirBeam v5.3 Update Features:\n"
+            "• Defensive Bug Fixes & Stability Polish: Fixed ?source=android query-string routing and User-Agent fallback.\n"
+            "• Robust Image Thumbnails: Safe mode conversions (RGBA/LA/P) on dark card background and portrait EXIF auto-rotation.\n"
+            "• Asynchronous Folder Staging: Non-blocking background zip archiving with live status tracking.\n"
+            "• Automatic Lifecycle Cleanup: Dedicated temp_staged_zips/ directory with safe item and session deletion.\n"
+            "• Two-Way Android Transfer: Tablet beams files/photos back to PC via high-speed Web Portal."
         )
         lbl_instruct = tk.Label(container, text=instructions, justify="left", bg="#0f172a", fg="#cbd5e1", font=("Segoe UI", 9), padx=14, pady=12)
         lbl_instruct.pack(fill="x", pady=14)
@@ -5585,7 +5736,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Header Info Card
         header_card = ttk.Frame(container, style="Card.TFrame", padding=14)
         header_card.pack(fill="x", padx=10, pady=(6, 10))
-        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.2)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(header_card, text="📱 iPhone & iPad Ultra-Speed Wireless Transfer (iOS Portal v5.3)", style="CardHeader.TLabel").pack(anchor="w")
         ttk.Label(header_card, text="Zero app installation required on iOS! Use Option 1 below for instant transfer over Home Wi-Fi, or Options 2 & 3 for direct router-bypass speeds (50–95+ MB/s).", style="CardBody.TLabel").pack(anchor="w", pady=(2, 0))
 
         # --- OPTION 1: Transfer Over Home Wi-Fi Router (Zero Hotspot Required) ---
@@ -6286,7 +6437,7 @@ class AirBeamSenderApp(BaseTkApp):
                 except Exception as e:
                     messagebox.showerror("Firewall Error", f"Failed to run Fix-AirBeam-Firewall.bat: {e}")
         else:
-            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.2 folder.")
+            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.3 folder.")
 
     def toggle_connect_to_iphone_hotspot(self, target_state):
         if target_state:
@@ -6485,9 +6636,12 @@ class AirBeamSenderApp(BaseTkApp):
         if count == 0:
             messagebox.showinfo("No Files", "There are no staged files for iPhone to clear.")
             return
+        old_files = list(self.selected_files)
         self.selected_files.clear()
         self.refresh_file_list()
         self.update_ios_files_summary()
+        for f in old_files:
+            self.cleanup_temp_zip(f)
         messagebox.showinfo("Files Cleared", f"Cleared {count} staged file(s). iPhone Safari will now show 0 files.")
 
     def clear_iphone_received_folder(self):
@@ -6625,25 +6779,16 @@ class AirBeamSenderApp(BaseTkApp):
     def add_folder(self):
         folder = filedialog.askdirectory(title="Select folder to beam")
         if folder:
-            status_lbl = getattr(self, "lbl_total_size", None)
-            status_ios = getattr(self, "lbl_ios_total_size", None)
-            folder_name = os.path.basename(folder)
-            msg = f"📦 Packaging folder '{folder_name}' into fast archive..."
-            if status_lbl and status_lbl.winfo_exists():
-                status_lbl.config(text=msg)
-            if status_ios and status_ios.winfo_exists():
-                status_ios.config(text=msg)
-            self.update_idletasks()
-            zip_path = package_folder_to_zip(folder)
-            if zip_path and zip_path not in self.selected_files:
-                self.selected_files.append(zip_path)
-            self.refresh_file_list()
-            self.update_ios_files_summary()
+            self._stage_folder_async(folder, target="main")
 
     def clear_files(self):
         if self.is_sending: return
+        old_files = list(self.selected_files)
         self.selected_files.clear()
         self.refresh_file_list()
+        self.update_ios_files_summary()
+        for f in old_files:
+            self.cleanup_temp_zip(f)
 
     def refresh_file_list(self):
         if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
@@ -7214,7 +7359,7 @@ class AirBeamSenderApp(BaseTkApp):
             "parallel_streams": PARALLEL_STREAMS,
             "stripe_size_mb": DEFAULT_STRIPE_SIZE // (1024 * 1024),
             "chunk_slice_kb": CHUNK_SLICE_BYTES // 1024,
-            "status": "AirBeam v5.2 Ultra-Speed Multi-Stream Ready",
+            "status": "AirBeam v5.3 Ultra-Speed Multi-Stream Ready",
             "diagnostics": {
                 "router_bypassed": is_direct_hotspot,
                 "connection_mode_description": mode_desc,

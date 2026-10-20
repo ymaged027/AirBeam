@@ -1,7 +1,7 @@
-# ⚡ AirBeam v5.2: Ultra-Speed Wireless Transfer
+# ⚡ AirBeam v5.3: Ultra-Speed Wireless Transfer
 ### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC, Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v5.2-0284c7?style=for-the-badge&logo=windows&logoColor=white)](AirBeam.exe)
+[![Release](https://img.shields.io/badge/Release-v5.3-0284c7?style=for-the-badge&logo=windows&logoColor=white)](AirBeam.exe)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v5.0-Receiver.apk?raw=true)

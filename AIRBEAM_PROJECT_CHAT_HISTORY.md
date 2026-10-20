@@ -1243,3 +1243,40 @@ User requested: *"it works fine now make me a setup for the app so i can share i
 8. **Version Bump to v5.2 & Desktop Integration**:
    - Bumped version to `v5.2` across `sender.py`, `AirBeamLauncher.cs`, `AirBeam-Setup.iss`, `create_shortcut.ps1`, `README.md`, and chat history.
    - Executed `create_shortcut.ps1` to update Desktop shortcuts to `AirBeam v5.2.lnk`.
+
+---
+
+## 37. AirBeam v5.3 Defensive Bug Fixes & Zero-Regression Polish
+
+### User Prompt:
+> *"Antigravity Execution Prompt: AirBeam v5.3 Defensive Bug Fixes & Zero-Regression Polish: Fix ?source=android Query-String Routing & User-Agent Fallback in IPhonePortalHTTPHandler, Fix Pillow RGBA / Palette Crash & Out-of-Range Index in /thumb/<idx>, Prevent UI Freeze & Disk Leak in package_folder_to_zip(), Version Increment to v5.3 & Verification."*
+
+### Detailed Technical Solutions & Deliverables:
+
+1. **Robust Query-String Routing & Multi-Signal Android Detection in `IPhonePortalHTTPHandler`**:
+   - Replaced naive route matching on `self.path` with `parsed = urllib.parse.urlsplit(self.path)` and `clean_path = parsed.path` across `do_GET` and `do_POST` so routes like `/index.html?source=android` or `/upload?source=android` match reliably.
+   - Updated Web Portal JavaScript `uploadSingleFile` to forward `window.location.search` to `/upload` (`'/upload' + (window.location.search || '') + ...`).
+   - Implemented 3-step prioritized Android detection in `POST /upload`:
+     1. Query parameter: `query.get("source", [""])[0].lower() == "android"`
+     2. Referer header: `"source=android" in (self.headers.get("Referer") or "").lower()`
+     3. User-Agent header: `"android" in (self.headers.get("User-Agent") or "").lower()`
+   - Guarantees Android tablet/phone uploads save into `Received_From_Android/` and update Tab 1's counter even if the user opens the Web Portal manually without query parameters.
+   - Preserved all multipart/raw streaming loops, `.part` staging, `sanitize_ntfs_filename()`, and `Received_From_iPhone/` routing intact.
+
+2. **Pillow Transparency / Palette Mode Safety & Out-of-Range Index Guard in `/thumb/<idx>`**:
+   - Added `ImageOps` to PIL imports and wrapped thumbnail generation in a resilient `try ... except (IndexError, ValueError, OSError, FileNotFoundError):` block that cleanly returns HTTP 404 with `Content-Length: 0` without worker thread crashes.
+   - Applied `ImageOps.exif_transpose(img)` safely before thumbnail scaling so mobile portrait photos are never rendered sideways.
+   - Fixed JPEG mode crash on transparent PNG, WebP, and palette GIF images: converts `RGBA`, `LA`, or `P` with transparency by compositing onto a dark background `(15, 23, 42)` matching the UI card `#0f172a`, and converts other non-RGB modes to `RGB`.
+   - Maintained strict in-memory streaming via `io.BytesIO` without writing temporary thumbnail files to disk or touching staged source files.
+
+3. **Asynchronous Non-Blocking Folder Packaging & Lifecycle Cleanup of Temporary Zips**:
+   - Isolated packaged folder archives into a dedicated directory `os.path.join(APP_ROOT, "temp_staged_zips")` (added to `.gitignore`).
+   - Tracked all generated zip paths in instance set `self._temp_folder_zips = set()`.
+   - Introduced `_stage_folder_async(folder_path, target)` executing `package_folder_to_zip` inside a background daemon thread (`threading.Thread(..., daemon=True)`), posting live status messages ("📦 Packaging folder '<name>'...") to the UI without blocking the Tkinter event loop, and marshaling the resulting `.zip` to the queue via `self.after(0, ...)`.
+   - Created safe helper `cleanup_temp_zip(path)` with strict guardrails: only removes a file if it is in `self._temp_folder_zips`, resides inside `TEMP_STAGED_ZIPS_DIR`, and is no longer present in any active queue (`selected_files` or `pc_selected_files`). User's own `.zip` files are guaranteed 100% untouched.
+   - Connected `cleanup_temp_zip` to `remove_selected_file`, `remove_selected_pc_file`, `clear_files`, `clear_pc_files`, `clear_ios_staged_files`, and app shutdown in `on_window_close`.
+
+4. **Synchronized Version Bump to v5.3**:
+   - Upgraded version to **v5.3** across `sender.py`, window title, Web Portal header, AppUserModelID (`airbeam.wirelessfiletransfer.sender.5.3`), `AirBeamLauncher.cs` (assembly `5.3.0.0`), recompiled root `AirBeam.exe`, `AirBeam-Setup.iss`, `create_shortcut.ps1`, and `README.md`.
+   - Ran `create_shortcut.ps1` to deploy `AirBeam v5.3.lnk` on Desktop and remove old shortcuts.
+   - Verified Python bytecode compilation (`python -m py_compile desktop-sender/sender.py`) with zero syntax errors.
