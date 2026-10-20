@@ -1,8 +1,18 @@
 $sourceDir = "C:\Users\youssef\WirelessFileTransfer-v3.0\dist\AirBeam"
-$zipPath = "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output\AirBeam-v5.0-Portable.zip"
+$zipPath = "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output\AirBeam-v5.3-Portable.zip"
 
 if (Test-Path "C:\Users\youssef\WirelessFileTransfer-v3.0\Fix-AirBeam-Firewall.bat") {
     Copy-Item "C:\Users\youssef\WirelessFileTransfer-v3.0\Fix-AirBeam-Firewall.bat" "$sourceDir\Fix-AirBeam-Firewall.bat" -Force
+}
+
+if (Test-Path "C:\Users\youssef\WirelessFileTransfer-v3.0\release") {
+    Copy-Item "C:\Users\youssef\WirelessFileTransfer-v3.0\release" "$sourceDir\release" -Recurse -Force
+}
+
+# Clean any runtime state files from portable source directory
+Get-ChildItem -Path "$sourceDir" -Include "airbeam_sender.log", "last_home_wifi.txt", "airbeam_config.json", "iphone_hotspot_config.json" -Recurse | Remove-Item -Force
+if (Test-Path "$sourceDir\temp_staged_zips") {
+    Remove-Item "$sourceDir\temp_staged_zips" -Recurse -Force
 }
 
 if (-not (Test-Path "C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output")) {

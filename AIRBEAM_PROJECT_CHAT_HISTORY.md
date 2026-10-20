@@ -1280,3 +1280,30 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Upgraded version to **v5.3** across `sender.py`, window title, Web Portal header, AppUserModelID (`airbeam.wirelessfiletransfer.sender.5.3`), `AirBeamLauncher.cs` (assembly `5.3.0.0`), recompiled root `AirBeam.exe`, `AirBeam-Setup.iss`, `create_shortcut.ps1`, and `README.md`.
    - Ran `create_shortcut.ps1` to deploy `AirBeam v5.3.lnk` on Desktop and remove old shortcuts.
    - Verified Python bytecode compilation (`python -m py_compile desktop-sender/sender.py`) with zero syntax errors.
+
+---
+
+## 38. Build AirBeam v5.3 Production Installer & Portable ZIP
+
+### User Prompt:
+> *"Antigravity Execution Prompt: Build AirBeam v5.3 Production Installer & Portable ZIP: Rebuild Standalone PyInstaller Distribution (dist\AirBeam\AirBeam.exe), Compile Inno Setup Installer (setup-output\AirBeam-v5.3-Setup.exe), Build Portable Standalone ZIP (setup-output\AirBeam-v5.3-Portable.zip), Clean Obsolete Setup Binaries & Sync Documentation / GitHub."*
+
+### Detailed Technical Solutions & Deliverables:
+
+1. **PyInstaller v5.3 Standalone Build (`dist\AirBeam\AirBeam.exe`)**:
+   - Bundled `desktop-sender/assets/airbeam.ico`, `Fix-AirBeam-Firewall.bat`, and `release/AirBeam-Receiver.apk` + `release/AirBeam-v5.0-Receiver.apk`.
+   - Executed clean PyInstaller compilation (`pyinstaller --noconfirm --clean AirBeam.spec`).
+   - Cleaned temporary compilation cache folder (`build/`) and verified zero runtime log/state artifacts exist inside `dist\AirBeam\`.
+
+2. **Inno Setup Production Installer (`setup-output\AirBeam-v5.3-Setup.exe`)**:
+   - Compiled `AirBeam-Setup.iss` via Inno Setup 6 (`ISCC.exe`) targeting version `5.3`.
+   - Generated non-admin user-level setup installer: `setup-output\AirBeam-v5.3-Setup.exe` (31.1 MB) with automated Windows firewall rule configuration and desktop shortcut generation.
+
+3. **Portable Standalone Archive (`setup-output\AirBeam-v5.3-Portable.zip`)**:
+   - Updated `create_portable_zip.ps1` to target `setup-output\AirBeam-v5.3-Portable.zip`.
+   - Packaged the complete self-contained distribution (`dist\AirBeam\*`), including `AirBeam.exe`, embedded Python runtime, `Fix-AirBeam-Firewall.bat`, and native Android receiver APKs (54.5 MB).
+
+4. **Repository Cleanup & Documentation Sync**:
+   - Deleted obsolete v5.0 distribution files (`AirBeam-v5.0-Setup.exe` and `AirBeam-v5.0-Portable.zip`) from `setup-output/`.
+   - Synchronized `README.md` download tables, quick start commands, file sizes, and directory layout to point directly to `AirBeam-v5.3-Setup.exe` and `AirBeam-v5.3-Portable.zip`.
+   - Staged production binaries, committed, and pushed cleanly to remote repository (`ymaged027/AirBeam` on `main`).

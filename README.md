@@ -15,8 +15,8 @@
 | Package | Format | Size | Description | Download Link |
 | :--- | :--- | :--- | :--- | :--- |
 | **AirBeam Windows Launcher** | `.exe` (C# .NET 4.0) | **104 KB** | Native GUI launcher with full path-quoting, icon embedding, and zero-console dispatch. | [⬇️ **Download AirBeam.exe**](AirBeam.exe?raw=true) |
-| **AirBeam Windows Installer** | `.exe` (Inno Setup) | **31.0 MB** | Recommended for Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v5.0-Setup.exe**](setup-output/AirBeam-v5.0-Setup.exe?raw=true) |
-| **AirBeam Portable Edition** | `.zip` (Standalone) | **43.6 MB** | Zero-install archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v5.0-Portable.zip**](setup-output/AirBeam-v5.0-Portable.zip?raw=true) |
+| **AirBeam Windows Installer** | `.exe` (Inno Setup) | **31.1 MB** | Recommended for Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v5.3-Setup.exe**](setup-output/AirBeam-v5.3-Setup.exe?raw=true) |
+| **AirBeam Portable Edition** | `.zip` (Standalone) | **54.5 MB** | Zero-install archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v5.3-Portable.zip**](setup-output/AirBeam-v5.3-Portable.zip?raw=true) |
 | **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Download AirBeam-v5.0-Receiver.apk**](release/AirBeam-v5.0-Receiver.apk?raw=true) |
 | **iPhone / iPad / Android Web Portal** | Browser Link | *0 MB* | No app installation needed. Open Safari or Chrome and connect over Home Wi-Fi or Windows 5 GHz Hotspot. | [📖 **View Web Portal Quick Start**](#3--iphone--ios-zero-install-web-portal) |
 
@@ -143,7 +143,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ## 🛠️ Quick Start Guide
 
 ### Windows PC
-1. Download [**AirBeam-v5.0-Setup.exe**](setup-output/AirBeam-v5.0-Setup.exe?raw=true) and run the installer (or extract [**AirBeam-v5.0-Portable.zip**](setup-output/AirBeam-v5.0-Portable.zip?raw=true)).
+1. Download [**AirBeam-v5.3-Setup.exe**](setup-output/AirBeam-v5.3-Setup.exe?raw=true) and run the installer (or extract [**AirBeam-v5.3-Portable.zip**](setup-output/AirBeam-v5.3-Portable.zip?raw=true)).
 2. Launch AirBeam from the Desktop shortcut or Start Menu.
 3. Select your desired tab:
    - **Beam to Android**: Select files and click **`⚡ Beam Files`**.
@@ -167,8 +167,8 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ```
 AirBeam/
 ├── setup-output/
-│   ├── AirBeam-v5.0-Setup.exe        # Standalone Windows Installer (31.0 MB)
-│   └── AirBeam-v5.0-Portable.zip      # Portable Standalone Archive (43.6 MB)
+│   ├── AirBeam-v5.3-Setup.exe        # Standalone Windows Installer (31.1 MB)
+│   └── AirBeam-v5.3-Portable.zip      # Portable Standalone Archive (54.5 MB)
 ├── desktop-sender/
 │   ├── sender.py                      # Core Python GUI & Multi-Stream Engine
 │   ├── AirBeamLauncher.cs             # Native Windows C# launcher source
