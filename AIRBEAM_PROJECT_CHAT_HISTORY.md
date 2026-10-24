@@ -1307,3 +1307,55 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Deleted obsolete v5.0 distribution files (`AirBeam-v5.0-Setup.exe` and `AirBeam-v5.0-Portable.zip`) from `setup-output/`.
    - Synchronized `README.md` download tables, quick start commands, file sizes, and directory layout to point directly to `AirBeam-v5.3-Setup.exe` and `AirBeam-v5.3-Portable.zip`.
    - Staged production binaries, committed, and pushed cleanly to remote repository (`ymaged027/AirBeam` on `main`).
+
+---
+
+## 39. UI Modernization, Visual Hierarchy & Interactive Polish
+
+### User Prompt:
+> *"can you make the ui better"*
+
+### Detailed Technical Solutions & Deliverables:
+
+1. **Modern Dark Theme & Cohesive Visual Hierarchy**:
+   - Replaced flat unstyled clam defaults with a refined 3-tier elevation dark theme matching the Web Portal:
+     - Base Window / Background: Deep Slate `#0F172A` / `#0B1120`.
+     - Card Frames (`Card.TFrame`): Rich `#1E293B` container with crisp 1px solid border (`#334155`).
+     - Inset Controls & File Listboxes: Deep dark slate `#0B1120` inset panels with 1px border highlights (`#334155` idle, `#3B82F6` focus).
+   - Upgraded `TNotebook` and `TNotebook.Tab` styling: eliminated dated grey bevels, added rounded tab padding (`[16, 8]`), active blue pill selection (`#2563EB` with `#3B82F6` border), and dark inactive states (`#1E293B` with `#334155` border).
+   - Modernized `TProgressbar` with slim 18px height, dark trough (`#0B1120`), 1px slate border (`#334155`), and electric cyan progress fill (`#38BDF8`).
+   - Sleek scrollbars (`Vertical.TScrollbar` / `Horizontal.TScrollbar`): styled with `#0B1120` trough, flat `#334155` slider, and `#475569` active hover state.
+
+2. **File Manager Listbox Redesign & Empty-State Placeholders**:
+   - Implemented categorical file emojis (`get_file_type_icon`) classifying files into dedicated visual categories:
+     - `📦` Archives (`.zip`, `.rar`, `.7z`, `.tar`, `.iso`)
+     - `🎬` Videos (`.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`)
+     - `🎵` Audio (`.mp3`, `.wav`, `.flac`, `.aac`, `.m4a`)
+     - `🖼️` Photos (`.jpg`, `.jpeg`, `.png`, `.webp`, `.heic`)
+     - `📄` Documents (`.pdf`, `.docx`, `.xlsx`, `.txt`, `.md`)
+     - `⚡` Executables & Binaries (`.exe`, `.msi`, `.apk`, `.bat`)
+     - `💻` Code & Scripts (`.py`, `.java`, `.cpp`, `.js`, `.json`)
+     - `📁` Staged Folders & Directories
+   - Formatted file list items with clean indentation and subtle dot separators: `format_file_list_entry(filepath, size)`.
+   - Replaced blank black void listboxes with friendly empty-state guidance in muted `#64748B`:
+     - `"   📂  No files staged yet. Drag & drop files or folders here, or click '+ Add Files'"`
+   - Double-clicking the empty-state placeholder automatically opens the file selection dialog (`add_files` or `add_pc_files`), while select-all (`Ctrl+A`) safely ignores empty placeholders.
+
+3. **Smooth Interactive Button Hover Transitions**:
+   - Implemented `bind_button_hover` to add responsive `:hover` states to native Tkinter buttons across all tabs:
+     - Mode selector buttons (`btn_mode_tablet`, `btn_mode_laptop`, `btn_mode_router`, `btn_pc_mode_wifi`, `btn_pc_mode_hotspot`).
+     - Action buttons (`btn_context_menu`, `btn_copy_url`, `btn_open_browser`, `btn_copy_apk_url`, `btn_open_apk_url`).
+     - Discovered PC chips (`btn_select` with `#10B981` $\rightarrow$ `#34D399` hover).
+   - Designed hover handlers to dynamically preserve active connection states (`_cur_bg` / `_cur_fg`) on mode switches.
+
+4. **Branding & Top Bar Header Elevation**:
+   - Styled application header bar with an electric brand logo `⚡ AIRBEAM`, version tag chip `v5.3`, and descriptive tagline `• Ultra-Speed Cross-Platform Transfer Engine`.
+   - Upgraded Windows Explorer Right-Click integration button with 1px border highlight and responsive hover transitions.
+   - Added direct download link copy & browser open buttons to Tab 4 (`Install Android APK`).
+
+5. **Production Rebuild & Verification**:
+   - Verified Python bytecode syntax compilation (`python -m py_compile desktop-sender/sender.py`) with zero errors.
+   - Rebuilt PyInstaller standalone distribution (`dist\AirBeam\AirBeam.exe`).
+   - Recompiled Inno Setup production installer (`setup-output\AirBeam-v5.3-Setup.exe`).
+   - Re-packaged portable standalone archive (`setup-output\AirBeam-v5.3-Portable.zip`).
+   - Synced documentation and committed cleanly to GitHub.

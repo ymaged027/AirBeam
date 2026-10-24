@@ -729,6 +729,77 @@ def format_speed_with_mbps(bps):
     mbps = (bps * 8.0) / 1_000_000.0
     return f"{mb_s:.1f} MB/s ({int(mbps)} Mbps)"
 
+def get_file_type_icon(filepath):
+    """Returns a modern categorical emoji icon for a filepath."""
+    if os.path.isdir(filepath) or filepath.endswith(".zip_temp"):
+        return "📁"
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext in (".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso", ".dmg", ".tgz"):
+        return "📦"
+    elif ext in (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".flv", ".m4v", ".ts", ".3gp", ".m4s"):
+        return "🎬"
+    elif ext in (".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".opus", ".alac", ".aiff"):
+        return "🎵"
+    elif ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".tiff", ".heic", ".heif", ".raw", ".dng"):
+        return "🖼️"
+    elif ext in (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".txt", ".rtf", ".odt", ".csv", ".md"):
+        return "📄"
+    elif ext in (".exe", ".msi", ".apk", ".bat", ".cmd", ".sh", ".ps1", ".vbs"):
+        return "⚡"
+    elif ext in (".py", ".java", ".cpp", ".c", ".h", ".cs", ".rs", ".go", ".html", ".css", ".js", ".ts", ".json", ".xml", ".yaml", ".yml", ".sql"):
+        return "💻"
+    return "📎"
+
+def format_file_list_entry(filepath, size=None):
+    """Formats a file list entry with rich icon, clean padding, and humanized size."""
+    icon = get_file_type_icon(filepath)
+    name = os.path.basename(filepath)
+    if size is not None:
+        return f"  {icon}  {name}    •   {format_bytes(size)}"
+    return f"  {icon}  {name}"
+
+def bind_button_hover(btn, normal_bg=None, hover_bg=None, normal_fg=None, hover_fg=None):
+    """Adds smooth hover highlight to any tk.Button with dynamic active state support."""
+    if not isinstance(btn, tk.Button):
+        return
+    btn._normal_bg = normal_bg or btn.cget("bg")
+    btn._normal_fg = normal_fg or btn.cget("fg")
+    btn._hover_bg = hover_bg or "#475569"
+    btn._hover_fg = hover_fg or "#ffffff"
+    btn._cur_bg = btn._normal_bg
+    btn._cur_fg = btn._normal_fg
+
+    def on_enter(e):
+        try:
+            if btn.cget("state") != "disabled":
+                cur_bg = getattr(btn, "_cur_bg", btn._normal_bg)
+                if cur_bg == "#0284c7":
+                    btn.config(bg="#0369a1", fg="#ffffff")
+                elif cur_bg == "#10b981":
+                    btn.config(bg="#059669", fg="#ffffff")
+                elif cur_bg == "#1e293b":
+                    btn.config(bg="#334155", fg="#38bdf8")
+                elif cur_bg == "#065f46":
+                    btn.config(bg="#047857", fg="#6ee7b7")
+                elif cur_bg == "#7f1d1d":
+                    btn.config(bg="#991b1b", fg="#ffffff")
+                else:
+                    btn.config(bg=btn._hover_bg, fg=btn._hover_fg)
+        except Exception:
+            pass
+
+    def on_leave(e):
+        try:
+            cur_bg = getattr(btn, "_cur_bg", btn._normal_bg)
+            cur_fg = getattr(btn, "_cur_fg", btn._normal_fg)
+            btn.config(bg=cur_bg, fg=cur_fg)
+        except Exception:
+            pass
+
+    btn.bind("<Enter>", on_enter, add="+")
+    btn.bind("<Leave>", on_leave, add="+")
+
+
 def format_eta(seconds):
     if seconds <= 0:
         return "00:00"
@@ -3464,6 +3535,8 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.setup_styles()
         self.setup_ui()
+        self.refresh_file_list()
+        self.update_pc_file_listbox()
 
         # Window-wide Drag-and-Drop Handler (native OLE IDropTarget via TkinterDnD and Win32 fallback)
         if TKDND_AVAILABLE:
@@ -3581,6 +3654,13 @@ class AirBeamSenderApp(BaseTkApp):
             file_list = getattr(self, "selected_files", [])
         if not listbox:
             return
+        # If user double clicks on empty-state placeholder, open the file picker!
+        if not file_list:
+            if listbox == getattr(self, "listbox_pc_files", None):
+                self.add_pc_files()
+            else:
+                self.add_files()
+            return
         sel = listbox.curselection()
         if not sel:
             return
@@ -3595,6 +3675,11 @@ class AirBeamSenderApp(BaseTkApp):
 
     def select_all_listbox(self, listbox):
         if listbox and listbox.winfo_exists():
+            if listbox == getattr(self, "listbox_pc_files", None):
+                if not getattr(self, "pc_selected_files", []):
+                    return "break"
+            elif not getattr(self, "selected_files", []):
+                return "break"
             listbox.select_set(0, tk.END)
         return "break"
 
@@ -3738,12 +3823,16 @@ class AirBeamSenderApp(BaseTkApp):
                 bg="#065f46",
                 fg="#34d399"
             )
+            self.btn_context_menu._cur_bg = "#065f46"
+            self.btn_context_menu._cur_fg = "#34d399"
         else:
             self.btn_context_menu.config(
                 text="⚡ Add to Windows Right-Click Menu",
                 bg="#1e293b",
                 fg="#f8fafc"
             )
+            self.btn_context_menu._cur_bg = "#1e293b"
+            self.btn_context_menu._cur_fg = "#f8fafc"
 
     def toggle_explorer_context_menu(self):
         if is_explorer_context_menu_registered():
@@ -4338,7 +4427,7 @@ class AirBeamSenderApp(BaseTkApp):
         style.theme_use("clam")
 
         style.configure(".", background="#0f172a", foreground="#f8fafc")
-        style.configure("Card.TFrame", background="#1e293b", relief="flat")
+        style.configure("Card.TFrame", background="#1e293b", relief="solid", borderwidth=1, bordercolor="#334155")
         style.configure("Header.TLabel", background="#0f172a", foreground="#ffffff", font=("Segoe UI", 16, "bold"))
         style.configure("CardHeader.TLabel", background="#1e293b", foreground="#f8fafc", font=("Segoe UI", 11, "bold"))
         style.configure("CardBody.TLabel", background="#1e293b", foreground="#94a3b8", font=("Segoe UI", 9))
@@ -4346,39 +4435,79 @@ class AirBeamSenderApp(BaseTkApp):
         style.configure("StatusHotspot.TLabel", background="#1e293b", foreground="#38bdf8", font=("Segoe UI", 10, "bold"))
         style.configure("StatusPending.TLabel", background="#1e293b", foreground="#f59e0b", font=("Segoe UI", 10, "bold"))
 
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), background="#2563eb", foreground="#ffffff", borderwidth=0, padding=8)
-        style.map("Primary.TButton", background=[("active", "#1d4ed8")])
+        style.configure("TNotebook", background="#0f172a", borderwidth=0)
+        style.configure("TNotebook.Tab", background="#1e293b", foreground="#94a3b8", font=("Segoe UI", 10, "bold"), padding=[16, 8], borderwidth=1, bordercolor="#334155", lightcolor="#334155", darkcolor="#334155")
+        style.map("TNotebook.Tab",
+            background=[("selected", "#2563eb"), ("active", "#334155")],
+            foreground=[("selected", "#ffffff"), ("active", "#f8fafc")],
+            bordercolor=[("selected", "#3b82f6"), ("active", "#475569")],
+            lightcolor=[("selected", "#3b82f6"), ("active", "#475569")],
+            darkcolor=[("selected", "#3b82f6"), ("active", "#475569")]
+        )
 
-        style.configure("Secondary.TButton", font=("Segoe UI", 9), background="#334155", foreground="#ffffff", borderwidth=0, padding=6)
-        style.map("Secondary.TButton", background=[("active", "#475569")])
+        style.configure("Primary.TButton", font=("Segoe UI", 9, "bold"), background="#2563eb", foreground="#ffffff", borderwidth=1, bordercolor="#3b82f6", relief="solid", padding=[12, 6])
+        style.map("Primary.TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")], bordercolor=[("active", "#60a5fa")])
 
-        style.configure("Accent.TButton", font=("Segoe UI", 11, "bold"), background="#10b981", foreground="#ffffff", borderwidth=0, padding=12)
-        style.map("Accent.TButton", background=[("active", "#059669")])
+        style.configure("Secondary.TButton", font=("Segoe UI", 9), background="#334155", foreground="#f8fafc", borderwidth=1, bordercolor="#475569", relief="solid", padding=[10, 5])
+        style.map("Secondary.TButton", background=[("active", "#475569"), ("pressed", "#1e293b")], bordercolor=[("active", "#64748b")])
 
-        style.configure("Hotspot.TButton", font=("Segoe UI", 9, "bold"), background="#0284c7", foreground="#ffffff", borderwidth=0, padding=6)
-        style.map("Hotspot.TButton", background=[("active", "#0369a1")])
+        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), background="#10b981", foreground="#ffffff", borderwidth=1, bordercolor="#34d399", relief="solid", padding=[14, 8])
+        style.map("Accent.TButton", background=[("active", "#059669"), ("pressed", "#047857")], bordercolor=[("active", "#6ee7b7")])
 
-        style.configure("Pause.TButton", font=("Segoe UI", 10, "bold"), background="#f59e0b", foreground="#ffffff", borderwidth=0, padding=10)
-        style.map("Pause.TButton", background=[("active", "#d97706")])
+        style.configure("Hotspot.TButton", font=("Segoe UI", 9, "bold"), background="#0284c7", foreground="#ffffff", borderwidth=1, bordercolor="#38bdf8", relief="solid", padding=[10, 5])
+        style.map("Hotspot.TButton", background=[("active", "#0369a1"), ("pressed", "#075985")], bordercolor=[("active", "#7dd3fc")])
 
-        style.configure("Cancel.TButton", font=("Segoe UI", 10, "bold"), background="#ef4444", foreground="#ffffff", borderwidth=0, padding=10)
-        style.map("Cancel.TButton", background=[("active", "#dc2626")])
+        style.configure("Pause.TButton", font=("Segoe UI", 9, "bold"), background="#f59e0b", foreground="#ffffff", borderwidth=1, bordercolor="#fbbf24", relief="solid", padding=[12, 6])
+        style.map("Pause.TButton", background=[("active", "#d97706"), ("pressed", "#b45309")], bordercolor=[("active", "#fde68a")])
 
-        style.configure("TProgressbar", thickness=16, troughcolor="#334155", background="#2563eb")
+        style.configure("Cancel.TButton", font=("Segoe UI", 9, "bold"), background="#ef4444", foreground="#ffffff", borderwidth=1, bordercolor="#f87171", relief="solid", padding=[12, 6])
+        style.map("Cancel.TButton", background=[("active", "#dc2626"), ("pressed", "#b91c1c")], bordercolor=[("active", "#fca5a5")])
+
+        style.configure("TProgressbar", thickness=18, troughcolor="#0b1120", background="#38bdf8", bordercolor="#334155", relief="solid", borderwidth=1)
+
+        style.configure("Vertical.TScrollbar", troughcolor="#0b1120", background="#334155", bordercolor="#1e293b", arrowcolor="#94a3b8", relief="flat", borderwidth=0)
+        style.map("Vertical.TScrollbar", background=[("active", "#475569")])
+        style.configure("Horizontal.TScrollbar", troughcolor="#0b1120", background="#334155", bordercolor="#1e293b", arrowcolor="#94a3b8", relief="flat", borderwidth=0)
+        style.map("Horizontal.TScrollbar", background=[("active", "#475569")])
 
     def setup_ui(self):
         # Top Application Navigation & Integration Bar
         top_bar = tk.Frame(self, bg="#0f172a")
-        top_bar.pack(fill="x", padx=16, pady=(10, 4))
+        top_bar.pack(fill="x", padx=16, pady=(10, 6))
+
+        brand_frame = tk.Frame(top_bar, bg="#0f172a")
+        brand_frame.pack(side="left")
 
         lbl_app_brand = tk.Label(
-            top_bar,
-            text="⚡ AirBeam v5.3  |  Ultra-Speed Cross-Platform Wireless Transfer",
+            brand_frame,
+            text="⚡ AIRBEAM",
             bg="#0f172a",
             fg="#38bdf8",
-            font=("Segoe UI", 10, "bold")
+            font=("Segoe UI", 12, "bold")
         )
         lbl_app_brand.pack(side="left")
+
+        lbl_ver_badge = tk.Label(
+            brand_frame,
+            text="v5.3",
+            bg="#1e293b",
+            fg="#94a3b8",
+            font=("Segoe UI", 8, "bold"),
+            padx=6,
+            pady=2,
+            highlightthickness=1,
+            highlightbackground="#334155"
+        )
+        lbl_ver_badge.pack(side="left", padx=(8, 8))
+
+        lbl_tagline = tk.Label(
+            brand_frame,
+            text="•   Ultra-Speed Cross-Platform Transfer Engine",
+            bg="#0f172a",
+            fg="#64748b",
+            font=("Segoe UI", 9)
+        )
+        lbl_tagline.pack(side="left")
 
         # Right-click Context Menu Toggle Button
         self.btn_context_menu = tk.Button(
@@ -4391,12 +4520,15 @@ class AirBeamSenderApp(BaseTkApp):
             font=("Segoe UI", 8, "bold"),
             relief="flat",
             bd=0,
-            padx=10,
-            pady=3,
+            padx=12,
+            pady=4,
             cursor="hand2",
+            highlightthickness=1,
+            highlightbackground="#334155",
             command=self.toggle_explorer_context_menu
         )
         self.btn_context_menu.pack(side="right")
+        bind_button_hover(self.btn_context_menu, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#f8fafc", hover_fg="#38bdf8")
         self.update_context_menu_button_state()
 
         self.notebook = ttk.Notebook(self)
@@ -4428,7 +4560,7 @@ class AirBeamSenderApp(BaseTkApp):
         container = scroll_frame.scrollable_window
 
         # 1. Live Wi-Fi Link & Band Telemetry Badge Card (Top of Window)
-        self.telemetry_card = tk.Frame(container, bg="#1e293b", padx=12, pady=7)
+        self.telemetry_card = tk.Frame(container, bg="#1e293b", padx=12, pady=7, highlightthickness=1, highlightbackground="#334155")
         self.telemetry_card.pack(fill="x", padx=10, pady=(6, 10))
 
         top_telem = tk.Frame(self.telemetry_card, bg="#1e293b")
@@ -4467,6 +4599,7 @@ class AirBeamSenderApp(BaseTkApp):
             command=lambda: self.set_connection_mode("TABLET_HOTSPOT")
         )
         self.btn_mode_tablet.pack(side="left", fill="x", expand=True, padx=2)
+        bind_button_hover(self.btn_mode_tablet, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
 
         self.btn_mode_laptop = tk.Button(
             mode_frame, text="💻 Laptop Hotspot",
@@ -4475,6 +4608,7 @@ class AirBeamSenderApp(BaseTkApp):
             command=lambda: self.set_connection_mode("LAPTOP_HOTSPOT")
         )
         self.btn_mode_laptop.pack(side="left", fill="x", expand=True, padx=2)
+        bind_button_hover(self.btn_mode_laptop, normal_bg="#334155", hover_bg="#475569", normal_fg="#94a3b8", hover_fg="#ffffff")
 
         self.btn_mode_router = tk.Button(
             mode_frame, text="🏠 Home Wi-Fi",
@@ -4483,6 +4617,7 @@ class AirBeamSenderApp(BaseTkApp):
             command=lambda: self.set_connection_mode("WIFI_ROUTER")
         )
         self.btn_mode_router.pack(side="left", fill="x", expand=True, padx=2)
+        bind_button_hover(self.btn_mode_router, normal_bg="#334155", hover_bg="#475569", normal_fg="#94a3b8", hover_fg="#ffffff")
 
         self.lbl_mode_desc = tk.Label(
             device_card,
@@ -4492,7 +4627,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.lbl_mode_desc.pack(fill="x", pady=(2, 6))
 
         # Hotspot Interactive Toggle Switch Row
-        self.switch_row = tk.Frame(device_card, bg="#162032", padx=10, pady=8)
+        self.switch_row = tk.Frame(device_card, bg="#162032", padx=10, pady=8, highlightthickness=1, highlightbackground="#334155")
         self.switch_row.pack(fill="x", pady=(4, 6))
 
         tk.Label(
@@ -4515,7 +4650,7 @@ class AirBeamSenderApp(BaseTkApp):
         ip_frame.pack(fill="x", pady=(4, 4))
 
         tk.Label(ip_frame, text="Target Device IP:", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)).pack(side="left")
-        self.entry_ip = tk.Entry(ip_frame, font=("Segoe UI", 10, "bold"), bg="#0f172a", fg="#38bdf8", insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#475569")
+        self.entry_ip = tk.Entry(ip_frame, font=("Segoe UI", 10, "bold"), bg="#0f172a", fg="#38bdf8", insertbackground="white", bd=0, highlightthickness=1, highlightbackground="#334155", highlightcolor="#38bdf8")
         self.entry_ip.insert(0, "10.150.131.50")
         self.entry_ip.pack(side="left", padx=8, ipady=4, fill="x", expand=True)
 
@@ -4561,14 +4696,17 @@ class AirBeamSenderApp(BaseTkApp):
         self.listbox_files = tk.Listbox(
             list_frame,
             height=7,
-            bg="#0f172a",
+            bg="#0b1120",
             fg="#f8fafc",
             selectmode=tk.EXTENDED,
             selectbackground="#2563eb",
             selectforeground="#ffffff",
-            font=("Segoe UI", 10),
+            activestyle="none",
+            font=("Segoe UI", 9),
             bd=0,
-            highlightthickness=0,
+            highlightthickness=1,
+            highlightbackground="#334155",
+            highlightcolor="#3b82f6",
             yscrollcommand=scrollbar.set
         )
         self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
@@ -4668,16 +4806,20 @@ class AirBeamSenderApp(BaseTkApp):
         btn_copy_url = tk.Button(
             btn_bar, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
             command=self.copy_android_portal_url
         )
         btn_copy_url.pack(side="left", padx=(0, 6))
+        bind_button_hover(btn_copy_url, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
 
         btn_open_browser = tk.Button(
             btn_bar, text="🌐 Open Portal", bg="#334155", fg="#f8fafc",
             font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
             command=lambda: webbrowser.open(f"http://127.0.0.1:{self.iphone_portal_port}/index.html?source=android")
         )
         btn_open_browser.pack(side="left")
+        bind_button_hover(btn_open_browser, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
 
         # Action bar with Open & Clear buttons
         action_bar = tk.Frame(rx_android_card, bg="#1e293b")
@@ -4708,14 +4850,22 @@ class AirBeamSenderApp(BaseTkApp):
             bg=active_bg if mode == "TABLET_HOTSPOT" else inactive_bg,
             fg=active_fg if mode == "TABLET_HOTSPOT" else inactive_fg
         )
+        self.btn_mode_tablet._cur_bg = active_bg if mode == "TABLET_HOTSPOT" else inactive_bg
+        self.btn_mode_tablet._cur_fg = active_fg if mode == "TABLET_HOTSPOT" else inactive_fg
+
         self.btn_mode_laptop.config(
             bg=active_bg if mode == "LAPTOP_HOTSPOT" else inactive_bg,
             fg=active_fg if mode == "LAPTOP_HOTSPOT" else inactive_fg
         )
+        self.btn_mode_laptop._cur_bg = active_bg if mode == "LAPTOP_HOTSPOT" else inactive_bg
+        self.btn_mode_laptop._cur_fg = active_fg if mode == "LAPTOP_HOTSPOT" else inactive_fg
+
         self.btn_mode_router.config(
             bg=active_bg if mode == "WIFI_ROUTER" else inactive_bg,
             fg=active_fg if mode == "WIFI_ROUTER" else inactive_fg
         )
+        self.btn_mode_router._cur_bg = active_bg if mode == "WIFI_ROUTER" else inactive_bg
+        self.btn_mode_router._cur_fg = active_fg if mode == "WIFI_ROUTER" else inactive_fg
 
         if mode == "TABLET_HOTSPOT":
             self.lbl_mode_desc.config(
@@ -4881,6 +5031,7 @@ class AirBeamSenderApp(BaseTkApp):
             command=lambda: self.set_pc_connection_mode("HOME_WIFI")
         )
         self.btn_pc_mode_wifi.pack(side="left", fill="x", expand=True, padx=3)
+        bind_button_hover(self.btn_pc_mode_wifi, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
 
         self.btn_pc_mode_hotspot = tk.Button(
             top_mode_row, text="💻 Windows 5 GHz Hotspot (Router-Bypass 50–100+ MB/s)",
@@ -4889,6 +5040,7 @@ class AirBeamSenderApp(BaseTkApp):
             command=lambda: self.set_pc_connection_mode("WINDOWS_HOTSPOT")
         )
         self.btn_pc_mode_hotspot.pack(side="left", fill="x", expand=True, padx=3)
+        bind_button_hover(self.btn_pc_mode_hotspot, normal_bg="#334155", hover_bg="#475569", normal_fg="#94a3b8", hover_fg="#ffffff")
 
         # Panel A: Home Wi-Fi Mode Information
         self.pc_wifi_mode_panel = tk.Frame(mode_card, bg="#0f172a", padx=10, pady=8, highlightthickness=1, highlightbackground="#334155")
@@ -5002,7 +5154,7 @@ class AirBeamSenderApp(BaseTkApp):
             manual_ip_row, textvariable=self.target_pc_ip,
             font=("Consolas", 10, "bold"), bg="#0f172a", fg="#38bdf8",
             insertbackground="#38bdf8", bd=0, highlightthickness=1,
-            highlightbackground="#475569", width=22
+            highlightbackground="#334155", highlightcolor="#38bdf8", width=22
         )
         self.entry_pc_ip.pack(side="left", padx=(0, 8), ipady=3)
 
@@ -5040,10 +5192,13 @@ class AirBeamSenderApp(BaseTkApp):
         pc_scrollbar.pack(side="right", fill="y")
 
         self.listbox_pc_files = tk.Listbox(
-            pc_list_frame, height=5, bg="#0f172a", fg="#f8fafc",
+            pc_list_frame, height=5, bg="#0b1120", fg="#f8fafc",
             selectmode=tk.EXTENDED,
             selectbackground="#2563eb", selectforeground="#ffffff",
-            font=("Segoe UI", 10), bd=0, highlightthickness=0,
+            activestyle="none",
+            font=("Segoe UI", 9), bd=0,
+            highlightthickness=1, highlightbackground="#334155",
+            highlightcolor="#3b82f6",
             yscrollcommand=pc_scrollbar.set
         )
         self.listbox_pc_files.pack(fill="both", expand=True, padx=4, pady=4)
@@ -5118,9 +5273,12 @@ class AirBeamSenderApp(BaseTkApp):
         hist_scroll.pack(side="right", fill="y")
 
         self.listbox_pc_history = tk.Listbox(
-            hist_list_frame, height=4, bg="#0f172a", fg="#f8fafc",
+            hist_list_frame, height=4, bg="#0b1120", fg="#f8fafc",
             selectbackground="#0284c7", selectforeground="#ffffff",
-            font=("Segoe UI", 9), bd=0, highlightthickness=0,
+            activestyle="none",
+            font=("Segoe UI", 9), bd=0,
+            highlightthickness=1, highlightbackground="#334155",
+            highlightcolor="#38bdf8",
             yscrollcommand=hist_scroll.set
         )
         self.listbox_pc_history.pack(fill="both", expand=True, padx=4, pady=4)
@@ -5204,12 +5362,21 @@ class AirBeamSenderApp(BaseTkApp):
         if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
             self.listbox_pc_files.delete(0, tk.END)
         total_bytes = 0
-        for f in self.pc_selected_files:
-            if os.path.exists(f):
-                sz = os.path.getsize(f)
-                total_bytes += sz
-                if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
-                    self.listbox_pc_files.insert(tk.END, f"{os.path.basename(f)} ({format_bytes(sz)})")
+        if not self.pc_selected_files:
+            empty_msg = "   📂  No files staged yet. Drag & drop files or folders here, or click '+ Add Files' above"
+            if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
+                self.listbox_pc_files.insert(tk.END, empty_msg)
+                try:
+                    self.listbox_pc_files.itemconfig(0, fg="#64748b")
+                except Exception:
+                    pass
+        else:
+            for f in self.pc_selected_files:
+                if os.path.exists(f):
+                    sz = os.path.getsize(f)
+                    total_bytes += sz
+                    if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
+                        self.listbox_pc_files.insert(tk.END, format_file_list_entry(f, sz))
         count = len(self.pc_selected_files)
         size_str = format_bytes(total_bytes)
         if hasattr(self, "lbl_pc_total_size") and self.lbl_pc_total_size.winfo_exists():
@@ -5362,10 +5529,11 @@ class AirBeamSenderApp(BaseTkApp):
 
             btn_select = tk.Button(
                 chip, text="⚡ Select", bg="#10b981", fg="#0f172a",
-                font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=2,
+                font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=3,
                 cursor="hand2", command=lambda target_ip=ip: self.select_target_pc(target_ip)
             )
             btn_select.pack(side="left")
+            bind_button_hover(btn_select, normal_bg="#10b981", hover_bg="#34d399", normal_fg="#0f172a", hover_fg="#0f172a")
 
     def select_target_pc(self, ip):
         self.target_pc_ip.set(ip)
@@ -5576,6 +5744,10 @@ class AirBeamSenderApp(BaseTkApp):
         if mode == "HOME_WIFI":
             self.btn_pc_mode_wifi.config(bg="#0284c7", fg="#ffffff")
             self.btn_pc_mode_hotspot.config(bg="#334155", fg="#94a3b8")
+            self.btn_pc_mode_wifi._cur_bg = "#0284c7"
+            self.btn_pc_mode_wifi._cur_fg = "#ffffff"
+            self.btn_pc_mode_hotspot._cur_bg = "#334155"
+            self.btn_pc_mode_hotspot._cur_fg = "#94a3b8"
             self.pc_wifi_mode_panel.pack(fill="x", pady=(6, 0))
             self.pc_hotspot_mode_panel.pack_forget()
             web_url = f"http://{self.local_ip}:{self.iphone_portal_port}/index.html"
@@ -5588,6 +5760,10 @@ class AirBeamSenderApp(BaseTkApp):
         else:
             self.btn_pc_mode_wifi.config(bg="#334155", fg="#94a3b8")
             self.btn_pc_mode_hotspot.config(bg="#0284c7", fg="#ffffff")
+            self.btn_pc_mode_wifi._cur_bg = "#334155"
+            self.btn_pc_mode_wifi._cur_fg = "#94a3b8"
+            self.btn_pc_mode_hotspot._cur_bg = "#0284c7"
+            self.btn_pc_mode_hotspot._cur_fg = "#ffffff"
             self.pc_wifi_mode_panel.pack_forget()
             self.pc_hotspot_mode_panel.pack(fill="x", pady=(6, 0))
             hotspot_ip = "192.168.137.1"
@@ -5693,7 +5869,36 @@ class AirBeamSenderApp(BaseTkApp):
         self.lbl_apk_url = tk.Label(container, text=f"Direct Link: {apk_url}\nFile: {apk_filename}", bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 10, "bold"), justify="center")
         self.lbl_apk_url.pack(anchor="center", pady=8)
 
+        apk_btn_row = tk.Frame(container, bg="#1e293b")
+        apk_btn_row.pack(anchor="center", pady=(2, 10))
+
+        self.btn_copy_apk_url = tk.Button(
+            apk_btn_row, text="📋 Copy Download Link", bg="#334155", fg="#f8fafc",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
+            command=self.copy_apk_url
+        )
+        self.btn_copy_apk_url.pack(side="left", padx=4)
+        bind_button_hover(self.btn_copy_apk_url, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
+
+        btn_open_apk_url = tk.Button(
+            apk_btn_row, text="🌐 Open in Browser", bg="#0284c7", fg="#ffffff",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=12, pady=5, cursor="hand2",
+            highlightthickness=1, highlightbackground="#38bdf8",
+            command=lambda: webbrowser.open(apk_url)
+        )
+        btn_open_apk_url.pack(side="left", padx=4)
+        bind_button_hover(btn_open_apk_url, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
+
         self.generate_qr_code(apk_url)
+
+    def copy_apk_url(self):
+        apk_url = f"http://{self.local_ip}:{APK_SERVER_PORT}/download"
+        self.clipboard_clear()
+        self.clipboard_append(apk_url)
+        if hasattr(self, "btn_copy_apk_url"):
+            self.btn_copy_apk_url.config(text="Copied! ✅", fg="#10b981")
+            self.after(2000, lambda: self.btn_copy_apk_url.config(text="📋 Copy Download Link", fg="#f8fafc"))
 
         instructions = (
             "AirBeam v5.3 Update Features:\n"
@@ -5810,9 +6015,11 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_copy_win_portal_url = tk.Button(
             btn_win_row, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
             command=self.copy_win_hotspot_portal_url
         )
         self.btn_copy_win_portal_url.pack(side="left", padx=(0, 6))
+        bind_button_hover(self.btn_copy_win_portal_url, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
 
         self.btn_ref_win_hotspot = tk.Button(
             btn_win_row, text="🔄 Refresh IP / QR", bg="#1e293b", fg="#38bdf8",
@@ -5821,6 +6028,7 @@ class AirBeamSenderApp(BaseTkApp):
             command=self.refresh_win_hotspot_qr
         )
         self.btn_ref_win_hotspot.pack(side="left", padx=(0, 6))
+        bind_button_hover(self.btn_ref_win_hotspot, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#38bdf8", hover_fg="#38bdf8")
 
         self.btn_switch_port = tk.Button(
             btn_win_row, text=f"🔀 Port: {self.iphone_portal_port}", bg="#1e293b", fg="#a855f7",
@@ -5829,13 +6037,16 @@ class AirBeamSenderApp(BaseTkApp):
             command=self.toggle_portal_port
         )
         self.btn_switch_port.pack(side="left", padx=(0, 6))
+        bind_button_hover(self.btn_switch_port, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#a855f7", hover_fg="#c084fc")
 
         self.btn_fix_win_firewall = tk.Button(
             btn_win_row, text="🛡️ Fix Firewall", bg="#7f1d1d", fg="#fca5a5",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#f87171",
             command=self.launch_firewall_fix
         )
         self.btn_fix_win_firewall.pack(side="left")
+        bind_button_hover(self.btn_fix_win_firewall, normal_bg="#7f1d1d", hover_bg="#991b1b", normal_fg="#fca5a5", hover_fg="#ffffff")
 
         # 3-Step Troubleshooting Guide for Option 2
         win_guide_box = tk.Frame(opt1_card, bg="#162032", padx=10, pady=8, highlightthickness=1, highlightbackground="#334155")
@@ -5938,14 +6149,17 @@ class AirBeamSenderApp(BaseTkApp):
         self.listbox_ios_files = tk.Listbox(
             ios_list_frame,
             height=6,
-            bg="#0f172a",
+            bg="#0b1120",
             fg="#f8fafc",
             selectmode=tk.EXTENDED,
             selectbackground="#2563eb",
             selectforeground="#ffffff",
-            font=("Segoe UI", 10),
+            activestyle="none",
+            font=("Segoe UI", 9),
             bd=0,
-            highlightthickness=0,
+            highlightthickness=1,
+            highlightbackground="#334155",
+            highlightcolor="#3b82f6",
             yscrollcommand=ios_scrollbar.set
         )
         self.listbox_ios_files.pack(fill="both", expand=True, padx=4, pady=4)
@@ -6252,16 +6466,20 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_copy_portal_url = tk.Button(
             btn_act_row, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
             command=self.copy_opt2_portal_url
         )
         self.btn_copy_portal_url.grid(row=0, column=0, sticky="ew", padx=(0, 3), pady=2)
+        bind_button_hover(self.btn_copy_portal_url, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
 
         self.btn_open_portal_pc = tk.Button(
             btn_act_row, text="🌐 Open in PC Browser", bg="#0284c7", fg="#ffffff",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#38bdf8",
             command=self.open_opt2_portal_browser
         )
         self.btn_open_portal_pc.grid(row=0, column=1, sticky="ew", padx=(3, 0), pady=2)
+        bind_button_hover(self.btn_open_portal_pc, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
 
         # Numbered 4-Step Checklist: Adaptive text wrapping
         guide_box = tk.Frame(info_box, bg="#162032", padx=8, pady=5, highlightthickness=1, highlightbackground="#334155")
@@ -6343,16 +6561,20 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_copy_opt3_url = tk.Button(
             btn_row, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
             command=self.copy_opt3_portal_url
         )
         self.btn_copy_opt3_url.grid(row=0, column=0, sticky="ew", padx=(0, 3), pady=2)
+        bind_button_hover(self.btn_copy_opt3_url, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
 
         self.btn_open_opt3_pc = tk.Button(
             btn_row, text="🌐 Open in PC Browser", bg="#0284c7", fg="#ffffff",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#38bdf8",
             command=self.open_opt3_portal_browser
         )
         self.btn_open_opt3_pc.grid(row=0, column=1, sticky="ew", padx=(3, 0), pady=2)
+        bind_button_hover(self.btn_open_opt3_pc, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
 
         self.btn_ref_opt3 = tk.Button(
             btn_row, text="🔄 Refresh IP / QR", bg="#1e293b", fg="#38bdf8",
@@ -6361,13 +6583,16 @@ class AirBeamSenderApp(BaseTkApp):
             command=self.refresh_opt3_home_portal
         )
         self.btn_ref_opt3.grid(row=1, column=0, sticky="ew", padx=(0, 3), pady=2)
+        bind_button_hover(self.btn_ref_opt3, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#38bdf8", hover_fg="#38bdf8")
 
         self.btn_fix_firewall = tk.Button(
             btn_row, text="🛡️ Fix Firewall", bg="#7f1d1d", fg="#fca5a5",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#f87171",
             command=self.launch_firewall_fix
         )
         self.btn_fix_firewall.grid(row=1, column=1, sticky="ew", padx=(3, 0), pady=2)
+        bind_button_hover(self.btn_fix_firewall, normal_bg="#7f1d1d", hover_bg="#991b1b", normal_fg="#fca5a5", hover_fg="#ffffff")
 
         # 3-Step Guide with Adaptive Text Wrapping
         guide_box = tk.Frame(info_box, bg="#162032", padx=8, pady=5, highlightthickness=1, highlightbackground="#334155")
@@ -6797,18 +7022,33 @@ class AirBeamSenderApp(BaseTkApp):
             self.listbox_ios_files.delete(0, tk.END)
 
         total_bytes = 0
-        for f in self.selected_files:
-            try:
-                size = os.path.getsize(f)
-                total_bytes += size
-                item_str = f"{os.path.basename(f)}  ({format_bytes(size)})"
-            except Exception:
-                item_str = os.path.basename(f)
-
+        if not self.selected_files:
+            empty_msg = "   📂  No files staged yet. Drag & drop files or folders here, or click '+ Add Files'"
             if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
-                self.listbox_files.insert(tk.END, item_str)
+                self.listbox_files.insert(tk.END, empty_msg)
+                try:
+                    self.listbox_files.itemconfig(0, fg="#64748b")
+                except Exception:
+                    pass
             if hasattr(self, "listbox_ios_files") and self.listbox_ios_files.winfo_exists():
-                self.listbox_ios_files.insert(tk.END, item_str)
+                self.listbox_ios_files.insert(tk.END, empty_msg)
+                try:
+                    self.listbox_ios_files.itemconfig(0, fg="#64748b")
+                except Exception:
+                    pass
+        else:
+            for f in self.selected_files:
+                try:
+                    size = os.path.getsize(f)
+                    total_bytes += size
+                    item_str = format_file_list_entry(f, size)
+                except Exception:
+                    item_str = format_file_list_entry(f)
+
+                if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
+                    self.listbox_files.insert(tk.END, item_str)
+                if hasattr(self, "listbox_ios_files") and self.listbox_ios_files.winfo_exists():
+                    self.listbox_ios_files.insert(tk.END, item_str)
 
         count = len(self.selected_files)
         size_str = format_bytes(total_bytes)
