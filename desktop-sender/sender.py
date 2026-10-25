@@ -5,12 +5,15 @@ import json
 import struct
 import socket
 import ssl
+import platform
 import threading
 import subprocess
 import re
 import base64
 import shutil
 from typing import Optional
+
+ARCH_TAG = "ARM64" if "arm" in platform.machine().lower() or "aarch64" in platform.machine().lower() else "x64"
 
 if getattr(sys, "frozen", False):
     APP_ROOT = os.path.dirname(sys.executable)
@@ -1728,7 +1731,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.5 • Web Portal</title>
+    <title>AirBeam v5.6 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1966,7 +1969,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.5</h1>
+        <h1><span>⚡</span> AirBeam v5.6</h1>
         <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -2590,7 +2593,8 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 with open(filepath, 'rb') as f:
                     f.seek(start_byte)
                     sent = 0
-                    if hasattr(self.connection, "sendfile") and not isinstance(self.connection, getattr(ssl, "SSLSocket", ())):
+                    is_ssl = isinstance(self.connection, getattr(ssl, "SSLSocket", ()))
+                    if not is_ssl and hasattr(self.connection, "sendfile"):
                         try:
                             while sent < chunk_len:
                                 n = self.connection.sendfile(f, offset=start_byte + sent, count=chunk_len - sent)
@@ -2609,7 +2613,11 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                         buf = f.read(to_read)
                         if not buf:
                             break
-                        self.wfile.write(buf)
+                        try:
+                            self.connection.sendall(buf)
+                        except Exception:
+                            self.wfile.write(buf)
+                            self.wfile.flush()
                         bytes_remaining -= len(buf)
                         self.app.record_ios_stream_bytes(len(buf), is_upload=False)
                 return
@@ -2799,9 +2807,15 @@ class DualThreadedServer(ThreadingHTTPServer):
     def finish_request(self, request, client_address):
         if self.ssl_context is not None:
             try:
-                request.settimeout(2.0)
+                request.settimeout(5.0)
                 first_byte = request.recv(1, socket.MSG_PEEK)
-                request.settimeout(None)
+                if not first_byte:
+                    try:
+                        request.close()
+                    except Exception:
+                        pass
+                    return
+                request.settimeout(30.0)
                 if first_byte == b'\x16':
                     # Client initiated TLS / HTTPS handshake (0x16 = TLS Record Handshake)
                     request = self.ssl_context.wrap_socket(request, server_side=True)
@@ -2813,9 +2827,14 @@ class DualThreadedServer(ThreadingHTTPServer):
                 return
             except Exception:
                 try:
-                    request.settimeout(None)
+                    request.settimeout(30.0)
                 except Exception:
                     pass
+        else:
+            try:
+                request.settimeout(30.0)
+            except Exception:
+                pass
         return self.RequestHandlerClass(request, client_address, self)
 
 class IPhonePortalServer:
@@ -2950,7 +2969,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.5 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.6 [{ARCH_TAG}] PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -3562,7 +3581,7 @@ class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
         self.root = self
-        self.title("AirBeam v5.5 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title(f"AirBeam v5.6 [{ARCH_TAG}] — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3645,7 +3664,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.5')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.6')
         except Exception:
             pass
 
@@ -4340,6 +4359,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.6-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.6-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.5-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.5-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.4-Receiver.apk"),
@@ -4433,7 +4454,7 @@ class AirBeamSenderApp(BaseTkApp):
 
             ch_str = f" (Ch {channel})" if channel else ""
             rate_str = f"{rate} Mbps" if rate and "mbps" not in str(rate).lower() else str(rate)
-            text = f"📶 SSID: {ssid} | Band: {band}{ch_str} | Link Rate: {rate_str} | Signal: {sig}"
+            text = f"📶 [{ARCH_TAG}] SSID: {ssid} | Band: {band}{ch_str} | Link Rate: {rate_str} | Signal: {sig}"
             self.lbl_telemetry_badge.config(text=text)
 
             is_airbeam = data.get("is_airbeam", False)
@@ -4504,7 +4525,7 @@ class AirBeamSenderApp(BaseTkApp):
                     if hasattr(self, "build_opt2_disconnected_view"):
                         self.build_opt2_disconnected_view()
         else:
-            self.lbl_telemetry_badge.config(text="📶 Wi-Fi: Disconnected or Wi-Fi adapter inactive")
+            self.lbl_telemetry_badge.config(text=f"📶 [{ARCH_TAG}] Wi-Fi: Disconnected or Wi-Fi adapter inactive")
             self.lbl_telemetry_tip.config(text="")
             if hasattr(self, "hotspot_switch"):
                 self.hotspot_switch.set_state(False, trigger_callback=False)
@@ -4688,7 +4709,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_ver_badge = tk.Label(
             brand_frame,
-            text="v5.5",
+            text=f"v5.6 [{ARCH_TAG}]",
             bg="#1e293b",
             fg="#94a3b8",
             font=("Segoe UI", 8, "bold"),
@@ -4762,7 +4783,7 @@ class AirBeamSenderApp(BaseTkApp):
         top_telem.pack(fill="x")
 
         self.lbl_telemetry_badge = tk.Label(
-            top_telem, text="📶 Wi-Fi: Detecting link telemetry...",
+            top_telem, text=f"📶 [{ARCH_TAG}] Wi-Fi: Detecting link telemetry...",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold")
         )
         self.lbl_telemetry_badge.pack(side="left")

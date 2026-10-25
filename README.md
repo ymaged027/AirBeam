@@ -1,9 +1,9 @@
-# ⚡ AirBeam v5.5: Ultra-Speed Wireless Transfer
-### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC, Android & iPhone / iOS
+# ⚡ AirBeam v5.6: Ultra-Speed Wireless Transfer
+### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC (x64 & ARM64), Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v5.5-0284c7?style=for-the-badge&logo=windows&logoColor=white)](AirBeam.exe)
+[![Release](https://img.shields.io/badge/Release-v5.6-0284c7?style=for-the-badge&logo=windows&logoColor=white)](AirBeam.exe)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
-[![Python](https://img.shields.io/badge/Python-3.14-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.14%20%7C%203.12%20ARM64-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v5.0-Receiver.apk?raw=true)
 [![iOS](https://img.shields.io/badge/iOS%20Safari-Zero%20Install-000000?style=for-the-badge&logo=apple&logoColor=white)](#3--iphone--ios-zero-install-web-portal)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
@@ -14,9 +14,11 @@
 
 | Package | Format | Size | Description | Download Link |
 | :--- | :--- | :--- | :--- | :--- |
-| **AirBeam Windows Launcher** | `.exe` (C# .NET 4.0) | **104 KB** | Native GUI launcher with full path-quoting, icon embedding, and zero-console dispatch. | [⬇️ **Download AirBeam.exe**](AirBeam.exe?raw=true) |
-| **AirBeam Windows Installer** | `.exe` (Inno Setup) | **31.1 MB** | Recommended for Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v5.5-Setup.exe**](setup-output/AirBeam-v5.5-Setup.exe?raw=true) |
-| **AirBeam Portable Edition** | `.zip` (Standalone) | **54.5 MB** | Zero-install archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v5.5-Portable.zip**](setup-output/AirBeam-v5.5-Portable.zip?raw=true) |
+| **AirBeam Windows Launcher** | `.exe` (C# .NET 4.0 AnyCPU) | **104 KB** | Universal GUI launcher with full path-quoting, icon embedding, and zero-console dispatch. Runs natively on x64 & ARM64. | [⬇️ **Download AirBeam.exe**](AirBeam.exe?raw=true) |
+| **AirBeam Windows Installer (x64)** | `.exe` (Inno Setup) | **32.6 MB** | Recommended for 64-bit Intel/AMD Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v5.6-Setup.exe**](setup-output/AirBeam-v5.6-Setup.exe?raw=true) |
+| **AirBeam Portable Edition (x64)** | `.zip` (Standalone) | **57.1 MB** | Zero-install 64-bit archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v5.6-Portable.zip**](setup-output/AirBeam-v5.6-Portable.zip?raw=true) |
+| **AirBeam Windows ARM64 Installer** | `.exe` (Inno Setup Native ARM64) | **19.6 MB** | 100% Native ARM64 edition for Windows 11 on ARM (Snapdragon X Elite / Snapdragon X Plus / SQ3). Installs native ARM64 runtime with zero emulation overhead. | [⬇️ **Download AirBeam-v5.6-Windows-ARM64-Setup.exe**](setup-output/AirBeam-v5.6-Windows-ARM64-Setup.exe?raw=true) |
+| **AirBeam Portable Edition (ARM64)** | `.zip` (Standalone ARM64) | **28.5 MB** | Zero-install native ARM64 archive for Copilot+ PCs and Snapdragon devices. Direct standalone execution. | [⬇️ **Download AirBeam-v5.6-Windows-ARM64-Portable.zip**](setup-output/AirBeam-v5.6-Windows-ARM64-Portable.zip?raw=true) |
 | **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Download AirBeam-v5.0-Receiver.apk**](release/AirBeam-v5.0-Receiver.apk?raw=true) |
 | **iPhone / iPad / Android Web Portal** | Browser Link | *0 MB* | No app installation needed. Open Safari or Chrome and connect over Home Wi-Fi or Windows 5 GHz Hotspot. | [📖 **View Web Portal Quick Start**](#3--iphone--ios-zero-install-web-portal) |
 
@@ -142,7 +144,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ## 🛠️ Quick Start Guide
 
 ### Windows PC
-1. Download [**AirBeam-v5.5-Setup.exe**](setup-output/AirBeam-v5.5-Setup.exe?raw=true) and run the installer (or extract [**AirBeam-v5.5-Portable.zip**](setup-output/AirBeam-v5.5-Portable.zip?raw=true)).
+1. Download [**AirBeam-v5.6-Setup.exe**](setup-output/AirBeam-v5.6-Setup.exe?raw=true) (or [**AirBeam-v5.6-Windows-ARM64-Setup.exe**](setup-output/AirBeam-v5.6-Windows-ARM64-Setup.exe?raw=true) for Snapdragon / Copilot+ PCs) and run the installer (or extract [**AirBeam-v5.6-Portable.zip**](setup-output/AirBeam-v5.6-Portable.zip?raw=true) / [**AirBeam-v5.6-Windows-ARM64-Portable.zip**](setup-output/AirBeam-v5.6-Windows-ARM64-Portable.zip?raw=true)).
 2. Launch AirBeam from the Desktop shortcut or Start Menu.
 3. Select your desired tab:
    - **🌐 Web Portal (iOS & Android)**: Connect any iPhone, iPad, or Android phone/tablet over Home Wi-Fi (Option 1) or Windows 5 GHz Hotspot (Option 2), scan the QR code with your camera, and beam files instantly. Also includes native socket controls for Android tablets with the AirBeam Receiver APK installed.
@@ -162,24 +164,28 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ```
 AirBeam/
 ├── setup-output/
-│   ├── AirBeam-v5.5-Setup.exe        # Standalone Windows Installer (31.1 MB)
-│   └── AirBeam-v5.5-Portable.zip      # Portable Standalone Archive (54.5 MB)
+│   ├── AirBeam-v5.6-Setup.exe                    # Windows x64 Installer (32.6 MB)
+│   ├── AirBeam-v5.6-Portable.zip                  # Windows x64 Portable Archive (57.1 MB)
+│   ├── AirBeam-v5.6-Windows-ARM64-Setup.exe       # Native Windows ARM64 Installer (19.6 MB)
+│   └── AirBeam-v5.6-Windows-ARM64-Portable.zip   # Native Windows ARM64 Portable (28.5 MB)
 ├── desktop-sender/
-│   ├── sender.py                      # Core Python GUI & Multi-Stream Engine
-│   ├── AirBeamLauncher.cs             # Native Windows C# launcher source
-│   └── assets/                        # High-resolution icons and logos
-├── android-app/                       # Native Android Receiver project (Java NIO)
+│   ├── sender.py                                  # Core Python GUI & Multi-Stream Engine
+│   ├── AirBeamLauncher.cs                         # Native Windows C# launcher source (AnyCPU)
+│   └── assets/                                    # High-resolution icons, logos & TLS certs
+├── android-app/                                   # Native Android Receiver project (Java NIO)
 ├── release/
-│   ├── AirBeam-Receiver.apk           # Standalone Android receiver APK
-│   └── AirBeam-v5.0-Receiver.apk      # Knox V1+V2 signed Android receiver APK
-├── AirBeam.exe                        # Native Windows GUI Launcher (Embedded Icon & Zero Console)
-├── Fix-AirBeam-Firewall.bat           # Self-elevating Windows Firewall configurator
-├── AirBeam-Setup.iss                  # Inno Setup 6 compiler configuration
-├── AirBeam.spec                       # Standalone PyInstaller build configuration
-├── create_portable_zip.ps1            # Standalone distribution zip packager
-├── create_shortcut.ps1                # Desktop shortcut generator
-├── README.md                          # Master documentation & benchmark guide
-└── AIRBEAM_PROJECT_CHAT_HISTORY.md    # Complete cumulative project chat history
+│   ├── AirBeam-Receiver.apk                       # Standalone Android receiver APK
+│   └── AirBeam-v5.0-Receiver.apk                  # Knox V1+V2 signed Android receiver APK
+├── AirBeam.exe                                    # Native Windows GUI Launcher (Embedded Icon & Zero Console)
+├── Fix-AirBeam-Firewall.bat                       # Self-elevating Windows Firewall configurator
+├── AirBeam-Setup.iss                              # Inno Setup 6 x64 compiler configuration
+├── AirBeam-Setup-ARM64.iss                        # Inno Setup 6 ARM64 compiler configuration
+├── AirBeam.spec                                   # Standalone PyInstaller build configuration
+├── build_arm64_release.ps1                        # Native Windows ARM64 build & package script
+├── create_portable_zip.ps1                        # Standalone distribution zip packager
+├── create_shortcut.ps1                            # Desktop shortcut generator
+├── README.md                                      # Master documentation & benchmark guide
+└── AIRBEAM_PROJECT_CHAT_HISTORY.md                # Complete cumulative project chat history
 ```
 
 ---

@@ -1476,3 +1476,52 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.4 to v5.
    - Verified Python syntax with `py_compile` and headless test suite.
    - Recompiled `AirBeam.exe` via `csc.exe` and refreshed Desktop shortcuts via `create_shortcut.ps1`.
    - Committed changes and pushed cleanly to GitHub `main`.
+
+---
+
+## 43. AirBeam v5.6 — Phase 41–42 Bug Fixes, Native Windows ARM64 Release & Dual-Architecture Packaging
+
+### User Request:
+Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.6 by:
+1. Fixing 3 subtle bugs from Phases 41–42:
+   - `ssl.SSLSocket.sendfile()` exception on HTTPS downloads (`GET /download/<idx>`).
+   - Bundle `airbeam_cert.pem` & `airbeam_key.pem` explicitly in `AirBeam.spec`.
+   - Guard `DualThreadedServer.finish_request()` against speculative empty socket hangs (`request.settimeout(5.0)`, close on timeout/empty, restore 30.0s).
+2. Adding Windows ARM64 architecture detection & launcher updates:
+   - In `desktop-sender/AirBeamLauncher.cs`: update search hierarchy for `pythonw.exe` (1. `runtime\pythonw.exe`, 2. ARM64 user installs, 3. 64-bit user installs, 4. system PATH).
+   - In `desktop-sender/sender.py`: detect `ARCH_TAG = "ARM64" if "arm" in platform.machine().lower() or "aarch64" in platform.machine().lower() else "x64"`, include in telemetry & UI.
+3. Building a 100% Native Windows ARM64 Standalone Package & Installer via `build_arm64_release.ps1`:
+   - Download complete Python 3.12.8 ARM64 runtime (`python-3.12.8-arm64.zip`) into `dist\AirBeam-ARM64\runtime\`.
+   - Download `win_arm64` wheels for Pillow, qrcode, and colorama via `pip download --platform win_arm64 --python-version 312 --only-binary=:all:` and extract into `dist\AirBeam-ARM64\runtime\Lib\site-packages\`.
+   - Copy `desktop-sender\`, `release\`, and `Fix-AirBeam-Firewall.bat` into `dist\AirBeam-ARM64\`.
+   - Compile `AirBeamLauncher.cs` into `dist\AirBeam-ARM64\AirBeam.exe` using `csc.exe /platform:anycpu`.
+   - Create `AirBeam-Setup-ARM64.iss` and compile via `ISCC.exe` into `setup-output\AirBeam-v5.6-Windows-ARM64-Setup.exe`.
+   - Compress `dist\AirBeam-ARM64\*` into `setup-output\AirBeam-v5.6-Windows-ARM64-Portable.zip`.
+4. Rebuilding standard x64 v5.6 release, cleaning obsolete setups, and syncing GitHub:
+   - Rebuild x64 PyInstaller bundle (`pyinstaller --noconfirm --clean AirBeam.spec` -> `dist\AirBeam\AirBeam.exe`).
+   - Compile x64 Inno Setup installer (`setup-output\AirBeam-v5.6-Setup.exe`).
+   - Build x64 Portable archive (`setup-output\AirBeam-v5.6-Portable.zip`).
+   - Delete obsolete v5.4 and v5.5 binaries from `setup-output/` so only the 4 v5.6 packages remain.
+   - Update `README.md` download table with both x64 and ARM64 packages.
+   - Commit and push to GitHub `ymaged027/AirBeam` on `main`.
+
+### Engineering Deliverables & Solutions:
+1. **SSLSocket.sendfile Bug Resolution**:
+   - In `IPhonePortalHTTPHandler`, inspected connection type with `is_ssl = isinstance(self.connection, getattr(ssl, "SSLSocket", ()))`.
+   - On SSL connections, streams the file in 2 MB (`2 * 1024 * 1024`) chunks using `self.connection.sendall()` (with `self.wfile.write()` fallback), avoiding `ValueError: sendfile is not supported on SSLSocket`. On unencrypted HTTP, retains kernel zero-copy `self.connection.sendfile()`.
+2. **TLS Certificate Spec Bundling**:
+   - Added explicit datas entries in `AirBeam.spec` for `desktop-sender/assets/airbeam_cert.pem` and `desktop-sender/assets/airbeam_key.pem`, ensuring compiled PyInstaller binaries find the certificate pair.
+3. **DualThreadedServer Empty Socket Guard**:
+   - In `finish_request()`, applied a 5.0-second socket timeout and peeked the initial byte to detect TLS vs HTTP handshakes. If a client connects and abruptly disconnects or times out without sending bytes, the socket is cleanly closed without hanging server threads.
+4. **Native Windows ARM64 Build Pipeline (`build_arm64_release.ps1`)**:
+   - Automated full Python 3.12.8 ARM64 runtime bundling with native `pythonw.exe`, `python312.dll`, `DLLs\_tkinter.pyd`, `DLLs\tcl86t.dll`, and `tcl\` libraries.
+   - Downloaded and unpacked ARM64 wheels for Pillow and qrcode into `Lib\site-packages\`.
+   - Created `AirBeam-Setup-ARM64.iss` with `ArchitecturesAllowed=arm64` and `ArchitecturesInstallIn64BitMode=arm64`.
+   - Produced `AirBeam-v5.6-Windows-ARM64-Setup.exe` (19.6 MB) and `AirBeam-v5.6-Windows-ARM64-Portable.zip` (28.5 MB).
+5. **x64 Release Rebuild & Cleanup**:
+   - Compiled PyInstaller distribution into `dist\AirBeam\AirBeam.exe`.
+   - Compiled Inno Setup installer: `AirBeam-v5.6-Setup.exe` (32.6 MB).
+   - Created portable ZIP: `AirBeam-v5.6-Portable.zip` (57.1 MB).
+   - Removed obsolete setup archives from `setup-output/`.
+   - Updated `README.md` download table and repository tree.
+

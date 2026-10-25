@@ -3,6 +3,8 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 datas = [
     ('C:/Users/youssef/WirelessFileTransfer-v3.0/desktop-sender/assets', 'assets'),
+    ('C:/Users/youssef/WirelessFileTransfer-v3.0/desktop-sender/assets/airbeam_cert.pem', 'assets'),
+    ('C:/Users/youssef/WirelessFileTransfer-v3.0/desktop-sender/assets/airbeam_key.pem', 'assets'),
     ('C:/Users/youssef/WirelessFileTransfer-v3.0/release/AirBeam-v5.0-Receiver.apk', 'release'),
     ('C:/Users/youssef/WirelessFileTransfer-v3.0/release/AirBeam-Receiver.apk', 'release'),
     ('C:/Users/youssef/WirelessFileTransfer-v3.0/Fix-AirBeam-Firewall.bat', '.')

@@ -6,12 +6,12 @@ using System.Text;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("AirBeam")]
-[assembly: AssemblyDescription("AirBeam v5.5 - Ultra-Speed Wireless Transfer")]
+[assembly: AssemblyDescription("AirBeam v5.6 - Ultra-Speed Wireless Transfer")]
 [assembly: AssemblyCompany("AirBeam Wireless")]
 [assembly: AssemblyProduct("AirBeam")]
 [assembly: AssemblyCopyright("Copyright © 2026 AirBeam")]
-[assembly: AssemblyVersion("5.5.0.0")]
-[assembly: AssemblyFileVersion("5.5.0.0")]
+[assembly: AssemblyVersion("5.6.0.0")]
+[assembly: AssemblyFileVersion("5.6.0.0")]
 
 namespace AirBeamLauncher
 {
@@ -26,7 +26,7 @@ namespace AirBeamLauncher
                 string scriptPath = Path.Combine(appDir, "desktop-sender", "sender.py");
                 string distExe = Path.Combine(appDir, "dist", "AirBeam", "AirBeam.exe");
 
-                string pythonExe = FindPythonExecutable();
+                string pythonExe = FindPythonExecutable(appDir);
 
                 if (File.Exists(scriptPath) && !string.IsNullOrEmpty(pythonExe))
                 {
@@ -101,29 +101,69 @@ namespace AirBeamLauncher
             }
         }
 
-        static string FindPythonExecutable()
+        static string FindPythonExecutable(string appDir)
         {
+            // 1. Bundled local runtime next to AirBeam.exe (Native Windows ARM64 Standalone package)
+            if (!string.IsNullOrEmpty(appDir))
+            {
+                string bundledW = Path.Combine(appDir, "runtime", "pythonw.exe");
+                if (File.Exists(bundledW)) return bundledW;
+
+                string bundledCli = Path.Combine(appDir, "runtime", "python.exe");
+                if (File.Exists(bundledCli)) return bundledCli;
+            }
+
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            // Specific known Python 3.14 path on this machine
-            string py314 = Path.Combine(localAppData, "Python", "pythoncore-3.14-64", "pythonw.exe");
-            if (File.Exists(py314)) return py314;
-
-            string py314Cli = Path.Combine(localAppData, "Python", "pythoncore-3.14-64", "python.exe");
-            if (File.Exists(py314Cli)) return py314Cli;
-
-            // Search LocalPrograms
+            string pyCoreDir = Path.Combine(localAppData, "Python");
             string programsDir = Path.Combine(localAppData, "Programs", "Python");
+
+            // 2. ARM64 user Python installations
+            if (Directory.Exists(pyCoreDir))
+            {
+                foreach (string dir in Directory.GetDirectories(pyCoreDir, "*arm64*"))
+                {
+                    string candidate = Path.Combine(dir, "pythonw.exe");
+                    if (File.Exists(candidate)) return candidate;
+                    candidate = Path.Combine(dir, "python.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+
+            if (Directory.Exists(programsDir))
+            {
+                foreach (string dir in Directory.GetDirectories(programsDir, "*arm64*"))
+                {
+                    string candidate = Path.Combine(dir, "pythonw.exe");
+                    if (File.Exists(candidate)) return candidate;
+                    candidate = Path.Combine(dir, "python.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+
+            // 3. Standard 64-bit user Python installations
+            if (Directory.Exists(pyCoreDir))
+            {
+                foreach (string dir in Directory.GetDirectories(pyCoreDir, "pythoncore-*"))
+                {
+                    string candidate = Path.Combine(dir, "pythonw.exe");
+                    if (File.Exists(candidate)) return candidate;
+                    candidate = Path.Combine(dir, "python.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+            }
+
             if (Directory.Exists(programsDir))
             {
                 foreach (string dir in Directory.GetDirectories(programsDir, "Python*"))
                 {
                     string candidate = Path.Combine(dir, "pythonw.exe");
                     if (File.Exists(candidate)) return candidate;
+                    candidate = Path.Combine(dir, "python.exe");
+                    if (File.Exists(candidate)) return candidate;
                 }
             }
 
-            // Check PATH entries
+            // 4. Check PATH entries
             string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
             string[] searchFiles = new string[] { "pythonw.exe", "pyw.exe", "python.exe", "py.exe" };
 
@@ -143,8 +183,9 @@ namespace AirBeamLauncher
                 }
             }
 
-            // Check system root drives
+            // 5. Check system root drives
             string[] sysRoots = new string[] {
+                @"C:\Python314-arm64", @"C:\Python313-arm64", @"C:\Python312-arm64",
                 @"C:\Python314", @"C:\Python313", @"C:\Python312", @"C:\Python311",
                 @"C:\Program Files\Python314", @"C:\Program Files\Python313", @"C:\Program Files\Python312"
             };
