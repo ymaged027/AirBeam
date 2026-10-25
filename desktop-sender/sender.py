@@ -2345,8 +2345,12 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         try:
+            msg = format % args
+            # Suppress raw binary dumps if client attempted TLS / HTTPS handshake
+            if "\\x" in msg or "\x16" in msg or "Bad request version" in msg:
+                msg = "Client attempted HTTPS connection (TLS ClientHello) on HTTP port. Browser must connect to http://, not https://"
             with open(LOG_FILE_PATH, "a", encoding="utf-8") as f:
-                f.write("[iOS Portal %s] %s\n" % (self.log_date_time_string(), format % args))
+                f.write("[Web Portal %s] %s\n" % (self.log_date_time_string(), msg))
         except Exception:
             pass
 
@@ -6185,14 +6189,16 @@ class AirBeamSenderApp(BaseTkApp):
         self.iphone_portal_port = 8090 if self.iphone_portal_port == 8080 else 8080
         if hasattr(self, "btn_switch_port"):
             self.btn_switch_port.config(text=f"🔀 Port: {self.iphone_portal_port}")
+        if hasattr(self, "btn_opt3_switch_port"):
+            self.btn_opt3_switch_port.config(text=f"🔀 Port: {self.iphone_portal_port}")
         if hasattr(self, "lbl_ios_live_speed"):
-            self.lbl_ios_live_speed.config(text=f"⚡ iOS Portal Status: Active on Ports 8080 & 8090 | Current: {self.iphone_portal_port}")
+            self.lbl_ios_live_speed.config(text=f"⚡ Web Portal Status: Active on Ports 8080 & 8090 | Current: {self.iphone_portal_port}")
+        if hasattr(self, "opt3_action_frame"):
+            self.refresh_opt3_home_portal()
         if getattr(self, "win_hotspot_for_iphone_active", False):
             self.refresh_win_hotspot_qr()
         elif getattr(self, "connected_to_iphone_hotspot", False):
             self.refresh_ios_qr_codes()
-        else:
-            self.refresh_opt3_home_portal()
 
     def open_opt2_portal_browser(self):
         url = getattr(self, "active_opt2_portal_url", None) or f"http://127.0.0.1:{self.iphone_portal_port}/index.html"
@@ -6432,16 +6438,23 @@ class AirBeamSenderApp(BaseTkApp):
         url_badge = tk.Frame(info_box, bg="#1e293b", padx=8, pady=5, highlightthickness=1, highlightbackground="#0284c7")
         url_badge.pack(fill="x", pady=(0, 6))
         self.lbl_opt3_url = tk.Label(
-            url_badge, text=f"🌐 Web Portal URL: {portal_url}",
+            url_badge, text=f"🌐 Web Portal: {portal_url}",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), anchor="w"
         )
         self.lbl_opt3_url.pack(side="left")
 
-        # Action Buttons Row (2x2 responsive grid)
+        lbl_http_note = tk.Label(
+            url_badge, text="⚠️ Use plain http:// (NOT https://)",
+            bg="#1e293b", fg="#f59e0b", font=("Segoe UI", 8, "bold")
+        )
+        lbl_http_note.pack(side="right")
+
+        # Action Buttons Row (Responsive 3-column grid)
         btn_row = tk.Frame(info_box, bg="#0f172a")
         btn_row.pack(fill="x", pady=(0, 6))
         btn_row.grid_columnconfigure(0, weight=1)
         btn_row.grid_columnconfigure(1, weight=1)
+        btn_row.grid_columnconfigure(2, weight=1)
 
         self.btn_copy_opt3_url = tk.Button(
             btn_row, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
@@ -6449,17 +6462,26 @@ class AirBeamSenderApp(BaseTkApp):
             highlightthickness=1, highlightbackground="#475569",
             command=self.copy_opt3_portal_url
         )
-        self.btn_copy_opt3_url.grid(row=0, column=0, sticky="ew", padx=(0, 3), pady=2)
+        self.btn_copy_opt3_url.grid(row=0, column=0, sticky="ew", padx=(0, 2), pady=2)
         bind_button_hover(self.btn_copy_opt3_url, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
 
         self.btn_open_opt3_pc = tk.Button(
-            btn_row, text="🌐 Open in PC Browser", bg="#0284c7", fg="#ffffff",
+            btn_row, text="🌐 Open in Browser", bg="#0284c7", fg="#ffffff",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
             highlightthickness=1, highlightbackground="#38bdf8",
             command=self.open_opt3_portal_browser
         )
-        self.btn_open_opt3_pc.grid(row=0, column=1, sticky="ew", padx=(3, 0), pady=2)
+        self.btn_open_opt3_pc.grid(row=0, column=1, sticky="ew", padx=(2, 2), pady=2)
         bind_button_hover(self.btn_open_opt3_pc, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
+
+        self.btn_opt3_switch_port = tk.Button(
+            btn_row, text=f"🔀 Port: {self.iphone_portal_port}", bg="#1e293b", fg="#a855f7",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#a855f7",
+            command=self.toggle_portal_port
+        )
+        self.btn_opt3_switch_port.grid(row=0, column=2, sticky="ew", padx=(2, 0), pady=2)
+        bind_button_hover(self.btn_opt3_switch_port, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#a855f7", hover_fg="#c084fc")
 
         self.btn_ref_opt3 = tk.Button(
             btn_row, text="🔄 Refresh IP / QR", bg="#1e293b", fg="#38bdf8",
@@ -6467,7 +6489,7 @@ class AirBeamSenderApp(BaseTkApp):
             highlightthickness=1, highlightbackground="#38bdf8",
             command=self.refresh_opt3_home_portal
         )
-        self.btn_ref_opt3.grid(row=1, column=0, sticky="ew", padx=(0, 3), pady=2)
+        self.btn_ref_opt3.grid(row=1, column=0, sticky="ew", padx=(0, 2), pady=2)
         bind_button_hover(self.btn_ref_opt3, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#38bdf8", hover_fg="#38bdf8")
 
         self.btn_fix_firewall = tk.Button(
@@ -6476,10 +6498,10 @@ class AirBeamSenderApp(BaseTkApp):
             highlightthickness=1, highlightbackground="#f87171",
             command=self.launch_firewall_fix
         )
-        self.btn_fix_firewall.grid(row=1, column=1, sticky="ew", padx=(3, 0), pady=2)
+        self.btn_fix_firewall.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(2, 0), pady=2)
         bind_button_hover(self.btn_fix_firewall, normal_bg="#7f1d1d", hover_bg="#991b1b", normal_fg="#fca5a5", hover_fg="#ffffff")
 
-        # 3-Step Guide with Adaptive Text Wrapping
+        # 4-Step Guide with Adaptive Text Wrapping
         guide_box = tk.Frame(info_box, bg="#162032", padx=8, pady=5, highlightthickness=1, highlightbackground="#334155")
         guide_box.pack(fill="x")
 
@@ -6487,6 +6509,7 @@ class AirBeamSenderApp(BaseTkApp):
             ("📸 Step 1:", f"Ensure phone or tablet is on '{cur_wifi}'. Scan QR with Camera → Tap link."),
             ("📥 Step 2 (PC ➔ Phone):", "Click '+ Add Files' below on PC; they appear instantly in browser!"),
             ("📤 Step 3 (Phone ➔ PC):", "In mobile browser, tap 'Upload Photos/Files' — saves straight to PC!"),
+            ("🔒 'Secure Connection' Error?:", "Make sure link starts with 'http://' (NOT 'https://'). If Chrome forces HTTPS, click '🔀 Port' to switch to 8090, or open an Incognito tab!"),
             ("🛡️ Tip:", "If browser says 'Can't reach site', click '🛡️ Fix Firewall' above (runs once as Admin).")
         ]
         desc_labels = []
