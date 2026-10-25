@@ -4,6 +4,7 @@ import time
 import json
 import struct
 import socket
+import ssl
 import threading
 import subprocess
 import re
@@ -1726,7 +1727,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.3 • Web Portal</title>
+    <title>AirBeam v5.4 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1964,7 +1965,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.3</h1>
+        <h1><span>⚡</span> AirBeam v5.4</h1>
         <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -2679,21 +2680,65 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
+def get_portal_ssl_context():
+    candidates = [
+        (os.path.join(BUNDLE_DIR, "assets", "airbeam_cert.pem"), os.path.join(BUNDLE_DIR, "assets", "airbeam_key.pem")),
+        (os.path.join(APP_ROOT, "desktop-sender", "assets", "airbeam_cert.pem"), os.path.join(APP_ROOT, "desktop-sender", "assets", "airbeam_key.pem")),
+        (os.path.join(APP_ROOT, "assets", "airbeam_cert.pem"), os.path.join(APP_ROOT, "assets", "airbeam_key.pem")),
+    ]
+    for cert_path, key_path in candidates:
+        if os.path.isfile(cert_path) and os.path.isfile(key_path):
+            try:
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
+                return ctx
+            except Exception as e:
+                log_error_to_file("SSL_INIT", f"Failed loading cert chain from {cert_path}: {e}")
+    return None
+
+class DualThreadedServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, server_address, RequestHandlerClass, ssl_context=None, bind_and_activate=True):
+        self.ssl_context = ssl_context
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+
+    def finish_request(self, request, client_address):
+        if self.ssl_context is not None:
+            try:
+                request.settimeout(2.0)
+                first_byte = request.recv(1, socket.MSG_PEEK)
+                request.settimeout(None)
+                if first_byte == b'\x16':
+                    # Client initiated TLS / HTTPS handshake (0x16 = TLS Record Handshake)
+                    request = self.ssl_context.wrap_socket(request, server_side=True)
+            except (socket.timeout, ssl.SSLError, OSError):
+                try:
+                    request.close()
+                except Exception:
+                    pass
+                return
+            except Exception:
+                try:
+                    request.settimeout(None)
+                except Exception:
+                    pass
+        return self.RequestHandlerClass(request, client_address, self)
+
 class IPhonePortalServer:
     def __init__(self, app_instance, ports=IPHONE_PORTAL_PORTS):
         self.app_instance = app_instance
         self.ports = list(ports) if isinstance(ports, (list, tuple)) else [ports]
         self.servers = []
         self.threads = []
+        self.ssl_context = get_portal_ssl_context()
 
     def start(self):
-        class ThreadedServer(ThreadingHTTPServer):
-            pass
-
         started = []
         for p in self.ports:
             try:
-                srv = ThreadedServer(('0.0.0.0', p), IPhonePortalHTTPHandler)
+                srv = DualThreadedServer(('0.0.0.0', p), IPhonePortalHTTPHandler, ssl_context=self.ssl_context)
                 srv.app_instance = self.app_instance
                 try:
                     srv.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -2705,7 +2750,7 @@ class IPhonePortalServer:
                 self.servers.append(srv)
                 self.threads.append(t)
                 started.append(p)
-                print(f"IPhonePortalServer running on port {p}")
+                print(f"IPhonePortalServer running on port {p} (Dual HTTP+HTTPS: {'Active' if self.ssl_context else 'HTTP-only'})")
             except Exception as e:
                 print(f"Failed to start IPhonePortalServer on port {p}: {e}")
         return len(started) > 0
@@ -2813,7 +2858,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.3 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.4 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -3419,7 +3464,7 @@ class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
         self.root = self
-        self.title("AirBeam v5.3 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title("AirBeam v5.4 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3497,7 +3542,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.3')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.4')
         except Exception:
             pass
 
@@ -4166,6 +4211,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.4-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.4-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.3-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.3-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.2-Receiver.apk"),
@@ -4510,7 +4557,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_ver_badge = tk.Label(
             brand_frame,
-            text="v5.3",
+            text="v5.4",
             bg="#1e293b",
             fg="#94a3b8",
             font=("Segoe UI", 8, "bold"),
@@ -6075,7 +6122,8 @@ class AirBeamSenderApp(BaseTkApp):
         bind_button_hover(btn_open_apk_url, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
 
         instructions = (
-            "AirBeam v5.3 Update Features:\n"
+            "AirBeam v5.4 Update Features:\n"
+            "• Dual HTTP & HTTPS Web Portal: Simultaneous plain HTTP & TLS SSL support eliminating mobile ERR_SSL_PROTOCOL_ERROR.\n"
             "• Unified Web Portal: One streamlined portal for both iOS & Android with direct camera QR auto-join.\n"
             "• Native Android Receiver App Support: Direct socket multi-stream beam (50–95+ MB/s) with full mode switching.\n"
             "• Robust Image Thumbnails: Safe mode conversions (RGBA/LA/P) on dark card background and portrait EXIF auto-rotation.\n"
@@ -6444,8 +6492,8 @@ class AirBeamSenderApp(BaseTkApp):
         self.lbl_opt3_url.pack(side="left")
 
         lbl_http_note = tk.Label(
-            url_badge, text="⚠️ Use plain http:// (NOT https://)",
-            bg="#1e293b", fg="#f59e0b", font=("Segoe UI", 8, "bold")
+            url_badge, text="🔒 Supports HTTP & HTTPS",
+            bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 8, "bold")
         )
         lbl_http_note.pack(side="right")
 
@@ -6570,7 +6618,7 @@ class AirBeamSenderApp(BaseTkApp):
                 except Exception as e:
                     messagebox.showerror("Firewall Error", f"Failed to run Fix-AirBeam-Firewall.bat: {e}")
         else:
-            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.3 folder.")
+            messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.4 folder.")
 
     def toggle_connect_to_iphone_hotspot(self, target_state):
         if target_state:
@@ -7523,7 +7571,7 @@ class AirBeamSenderApp(BaseTkApp):
             "parallel_streams": PARALLEL_STREAMS,
             "stripe_size_mb": DEFAULT_STRIPE_SIZE // (1024 * 1024),
             "chunk_slice_kb": CHUNK_SLICE_BYTES // 1024,
-            "status": "AirBeam v5.3 Ultra-Speed Multi-Stream Ready",
+            "status": "AirBeam v5.4 Ultra-Speed Multi-Stream Ready",
             "diagnostics": {
                 "router_bypassed": is_direct_hotspot,
                 "connection_mode_description": mode_desc,

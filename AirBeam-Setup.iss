@@ -1,8 +1,8 @@
 ; Script generated for Inno Setup 6
-; AirBeam v5.3 Professional Setup Installer
+; AirBeam v5.4 Professional Setup Installer
 
 #define MyAppName "AirBeam"
-#define MyAppVersion "5.3"
+#define MyAppVersion "5.4"
 #define MyAppPublisher "AirBeam Wireless"
 #define MyAppExeName "AirBeam.exe"
 
@@ -17,7 +17,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output
-OutputBaseFilename=AirBeam-v5.3-Setup
+OutputBaseFilename=AirBeam-v5.4-Setup
 SetupIconFile=C:\Users\youssef\WirelessFileTransfer-v3.0\desktop-sender\assets\airbeam.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

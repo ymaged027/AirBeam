@@ -1393,3 +1393,38 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Rebuilt standalone PyInstaller distribution (`dist\AirBeam\AirBeam.exe`).
    - Compiled Inno Setup installer (`setup-output\AirBeam-v5.3-Setup.exe`).
    - Packaged standalone portable archive (`setup-output\AirBeam-v5.3-Portable.zip`).
+
+---
+
+## 41. AirBeam v5.4 — Dual HTTP/HTTPS Web Portal Engine & Production Distribution
+
+### User Prompts:
+1. > *"Option 1: 🏠 Home Wi-Fi Router when i open it from my phone it says this site can not provide a secure connection and i used the fix firewall but still same issue"*
+2. > *"still same issue it was working before dont push the app to github until i say when the issue is resolved and dont update the setup also"*
+3. > *"update the setups and push the app and change the version"*
+
+### Root Cause Analysis:
+- Modern mobile browsers (Google Chrome for Android and Samsung Internet) have default "Always use secure connections" (HTTPS-First mode) enabled.
+- Connecting to `192.168.1.9:8080` or scanning the QR code triggers an automatic TLS 1.3 ClientHello (`\x16\x03\x01`) on the HTTP port.
+- Python's standard `ThreadingHTTPServer` rejected raw TLS bytes with `HTTP 400 Bad request version ('\x01A')` and aborted TCP connection, rendering `ERR_SSL_PROTOCOL_ERROR` ("This site can not provide a secure connection") with no user bypass.
+
+### Engineering Deliverables & Solutions:
+1. **Dual HTTP & HTTPS Architecture (`DualThreadedServer`)**:
+   - Implemented `DualThreadedServer` subclassing `ThreadingHTTPServer`.
+   - In `finish_request()`, incoming connection sockets peek at byte 0 (`socket.MSG_PEEK`).
+   - If byte 0 is `\x16` (TLS Record Handshake), the connection is wrapped via `ssl_context.wrap_socket(request, server_side=True)`.
+   - If byte 0 is standard ASCII (HTTP verb), the socket remains a plain TCP stream for maximum transfer throughput with zero encryption overhead.
+   - Handled both HTTP and HTTPS seamlessly on both ports (8080 & 8090) simultaneously.
+2. **Bundled Self-Signed Certificates**:
+   - Generated and packaged `airbeam_cert.pem` and `airbeam_key.pem` inside `desktop-sender/assets/`.
+   - Added automatic fallback to HTTP-only mode if certificates are unavailable.
+3. **Version Bump to v5.4**:
+   - Updated version definitions in `desktop-sender/sender.py`, `desktop-sender/AirBeamLauncher.cs`, `AirBeam-Setup.iss`, `create_portable_zip.ps1`, and `README.md`.
+   - Recompiled launcher binary `AirBeam.exe` via `csc.exe`.
+4. **Production Build & Packaging**:
+   - Recompiled PyInstaller distribution into `dist\AirBeam\AirBeam.exe`.
+   - Compiled Inno Setup installer: `setup-output\AirBeam-v5.4-Setup.exe` (28.89 MB).
+   - Generated standalone portable ZIP archive: `setup-output\AirBeam-v5.4-Portable.zip` (49.55 MB).
+   - Removed obsolete v5.3 setup binaries from `setup-output/`.
+5. **Remote GitHub Synchronization**:
+   - Synchronized all code, documentation, and release artifacts to GitHub repository (`ymaged027/AirBeam` on `main`).
