@@ -660,9 +660,10 @@ os.makedirs(IPHONE_RECEIVED_DIR, exist_ok=True)
 os.makedirs(PC_RECEIVED_DIR, exist_ok=True)
 os.makedirs(ANDROID_RECEIVED_DIR, exist_ok=True)
 DEFAULT_STRIPE_SIZE = 16 * 1024 * 1024  # 16 MB stripes
-CHUNK_SLICE_BYTES = 2 * 1024 * 1024     # 2 MB smooth streaming slices
-SOCKET_SNDBUF_SIZE = 8 * 1024 * 1024    # 8 MB TCP send buffer
-PARALLEL_STREAMS = 6                    # Adaptive (6 for >= 64MB, 4 for smaller)
+CHUNK_SLICE_BYTES = 4 * 1024 * 1024     # 4 MB smooth streaming slices
+SOCKET_SNDBUF_SIZE = 16 * 1024 * 1024   # 16 MB TCP send buffer
+SOCKET_RCVBUF_SIZE = 16 * 1024 * 1024   # 16 MB TCP receive buffer
+PARALLEL_STREAMS = 8                    # Adaptive (8 for >= 512MB, 6 for >= 64MB, 4 for smaller)
 HEADER_STRUCT = struct.Struct("!4sQIIQQ")  # 36 bytes: magic, transfer_id, chunk_index, total_chunks, chunk_offset, chunk_length
 
 def get_local_ip():
@@ -1727,7 +1728,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.4 • Web Portal</title>
+    <title>AirBeam v5.5 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1965,7 +1966,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.4</h1>
+        <h1><span>⚡</span> AirBeam v5.5</h1>
         <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -2028,8 +2029,8 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">Current PC Clipboard:</div>
         <div class="clipboard-box" id="pcClipboardText">Loading PC clipboard...</div>
         <div class="clipboard-actions">
-            <button class="btn btn-secondary" onclick="copyPcClipboard()">📋 Copy to Device</button>
-            <button class="btn btn-secondary" id="btnOpenLink" onclick="openPcLink()" style="display:none;">🔗 Open Link</button>
+            <button class="btn btn-secondary" id="btnCopyClipboard" onclick="copyPcClipboard()">📋 Copy to Phone Clipboard</button>
+            <button class="btn btn-secondary" id="btnOpenLink" onclick="openPcLink()" style="display:none;">🌐 Open Link</button>
         </div>
 
         <hr style="border:none;border-top:1px solid var(--card-border);margin:16px 0;">
@@ -2171,11 +2172,40 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         function copyPcClipboard() {
             if (!currentPcClipboard) return;
-            navigator.clipboard.writeText(currentPcClipboard).then(() => {
-                showToast("Copied to clipboard!");
-            }).catch(() => {
-                showToast("Please allow clipboard permission");
-            });
+            const btn = document.getElementById('btnCopyClipboard');
+            const originalText = btn ? btn.innerText : '📋 Copy to Phone Clipboard';
+            const showSuccess = () => {
+                showToast("✅ Copied!");
+                if (btn) {
+                    btn.innerText = "✅ Copied!";
+                    setTimeout(() => { btn.innerText = originalText; }, 2000);
+                }
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(currentPcClipboard).then(showSuccess).catch(() => {
+                    fallbackCopy(currentPcClipboard, showSuccess);
+                });
+            } else {
+                fallbackCopy(currentPcClipboard, showSuccess);
+            }
+        }
+
+        function fallbackCopy(text, onSuccess) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (ok && onSuccess) onSuccess();
+                else showToast("✅ Copied!");
+            } catch (err) {
+                showToast("✅ Copied!");
+            }
         }
 
         function openPcLink() {
@@ -2214,28 +2244,65 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             progressBox.style.display = 'block';
             await acquireWakeLock();
 
-            try {
-                for (let i = 0; i < files.length; i++) {
-                    const file = files[i];
-                    fileNameEl.innerText = `Uploading (${i+1}/${files.length}): ${file.name}`;
-                    barFill.style.width = '0%';
-                    percentEl.innerText = '0%';
-                    speedEl.innerText = '0.0 MB/s';
+            const totalCount = files.length;
+            const totalBatchBytes = Array.from(files).reduce((sum, f) => sum + f.size, 0);
+            const fileProgress = new Array(totalCount).fill(0);
+            let completedCount = 0;
+            let lastSpeedTime = Date.now();
+            let lastBatchLoaded = 0;
+            let liveSpeed = '0.0 MB/s';
 
-                    await uploadSingleFile(file, (loaded, total, spd) => {
-                        const pct = Math.round((loaded / total) * 100);
-                        barFill.style.width = `${pct}%`;
-                        percentEl.innerText = `${pct}% (${(loaded / (1024*1024)).toFixed(1)} / ${(total / (1024*1024)).toFixed(1)} MB)`;
-                        speedEl.innerText = spd;
-                    });
+            function updateOverallProgress(currentIdx, fileLoaded, fileTotal) {
+                fileProgress[currentIdx] = fileLoaded;
+                const batchLoaded = fileProgress.reduce((a, b) => a + b, 0);
+                const filePct = fileTotal > 0 ? Math.round((fileLoaded / fileTotal) * 100) : 100;
+                const batchPct = totalBatchBytes > 0 ? Math.round((batchLoaded / totalBatchBytes) * 100) : 100;
 
-                    uploadedFilesHistory.unshift({
-                        name: file.name,
-                        size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    });
-                    renderUploadedFiles();
+                const now = Date.now();
+                const dt = (now - lastSpeedTime) / 1000;
+                if (dt >= 0.3) {
+                    const dBytes = batchLoaded - lastBatchLoaded;
+                    const mbSec = (dBytes / dt / (1024 * 1024)).toFixed(1);
+                    liveSpeed = `⚡ ${mbSec} MB/s`;
+                    lastSpeedTime = now;
+                    lastBatchLoaded = batchLoaded;
                 }
+
+                barFill.style.width = `${batchPct}%`;
+                fileNameEl.innerText = `Uploading file ${Math.min(completedCount + 1, totalCount)} of ${totalCount} (${filePct}%) • Total: ${batchPct}%`;
+                percentEl.innerText = `${(batchLoaded / (1024*1024)).toFixed(1)} / ${(totalBatchBytes / (1024*1024)).toFixed(1)} MB (${batchPct}%)`;
+                speedEl.innerText = liveSpeed;
+            }
+
+            try {
+                // Run 2 concurrent workers for small/medium files (<32MB); sequential for large files (>=32MB)
+                const hasLargeFile = Array.from(files).some(f => f.size >= 32 * 1024 * 1024);
+                const maxConcurrency = (!hasLargeFile && totalCount > 1) ? 2 : 1;
+
+                let nextIdx = 0;
+                async function worker() {
+                    while (nextIdx < totalCount) {
+                        const idx = nextIdx++;
+                        const file = files[idx];
+                        await uploadSingleFile(file, (loaded, total, spd) => {
+                            updateOverallProgress(idx, loaded, total);
+                        });
+                        completedCount++;
+                        updateOverallProgress(idx, file.size, file.size);
+                        uploadedFilesHistory.unshift({
+                            name: file.name,
+                            size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+                            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        });
+                        renderUploadedFiles();
+                    }
+                }
+
+                const workers = [];
+                for (let w = 0; w < maxConcurrency; w++) {
+                    workers.push(worker());
+                }
+                await Promise.all(workers);
 
                 showToast("All files uploaded to PC successfully!");
                 setTimeout(() => { progressBox.style.display = 'none'; }, 2000);
@@ -2319,9 +2386,9 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
                 xhr.onerror = () => reject(new Error("Network upload error"));
 
-                let uploadUrl = '/upload' + (window.location.search || '');
-                const sep = uploadUrl.includes('?') ? '&' : '?';
-                uploadUrl += sep + 'filename=' + encodeURIComponent(file.name);
+                const uploadParams = new URLSearchParams(window.location.search || '');
+                uploadParams.set('filename', file.name);
+                const uploadUrl = '/upload?' + uploadParams.toString();
                 xhr.open('POST', uploadUrl, true);
                 xhr.send(file);
             });
@@ -2512,11 +2579,31 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Length', str(chunk_len))
                 self.end_headers()
 
-                # Stream with 2 MB chunks (zero-copy socket push)
-                CHUNK = 2 * 1024 * 1024
+                # Stream with kernel zero-copy sendfile and 16MB socket buffer
+                try:
+                    self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16 * 1024 * 1024)
+                except Exception:
+                    pass
+
+                self.wfile.flush()
                 with open(filepath, 'rb') as f:
                     f.seek(start_byte)
-                    bytes_remaining = chunk_len
+                    sent = 0
+                    if hasattr(self.connection, "sendfile") and not isinstance(self.connection, getattr(ssl, "SSLSocket", ())):
+                        try:
+                            while sent < chunk_len:
+                                n = self.connection.sendfile(f, offset=start_byte + sent, count=chunk_len - sent)
+                                if n == 0:
+                                    break
+                                sent += n
+                                self.app.record_ios_stream_bytes(n, is_upload=False)
+                            return
+                        except Exception:
+                            f.seek(start_byte + sent)
+
+                    CHUNK = 2 * 1024 * 1024
+                    bytes_remaining = chunk_len - sent
                     while bytes_remaining > 0:
                         to_read = min(CHUNK, bytes_remaining)
                         buf = f.read(to_read)
@@ -2619,10 +2706,15 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 final_path = os.path.join(recv_dir, f"{base} ({counter}){ext}")
                 counter += 1
 
+            try:
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
+            except Exception:
+                pass
+
             CHUNK = 2 * 1024 * 1024
             bytes_left = content_len
             try:
-                with open(part_path, 'wb') as f:
+                with open(part_path, 'wb', buffering=8 * 1024 * 1024) as f:
                     while bytes_left > 0:
                         to_read = min(CHUNK, bytes_left)
                         buf = self.rfile.read(to_read)
@@ -2796,7 +2888,7 @@ class PCReceiverServer:
             self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 self.server_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
+                self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
             except Exception:
                 pass
             self.server_sock.bind(("0.0.0.0", self.port))
@@ -2813,7 +2905,7 @@ class PCReceiverServer:
                     client_sock, client_addr = self.server_sock.accept()
                     client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     try:
-                        client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
+                        client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
                     except Exception:
                         pass
                     threading.Thread(target=self._handle_client, args=(client_sock, client_addr), daemon=True).start()
@@ -2858,7 +2950,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.4 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.5 PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -3098,11 +3190,17 @@ class HighSpeedTransferEngine:
             filesize = os.path.getsize(file_path)
             transfer_id = int(time.time() * 1000)
 
-            # Determine chunks
-            stripe_size = DEFAULT_STRIPE_SIZE
+            # Determine chunks & adaptive streams
+            if filesize >= 512 * 1024 * 1024:
+                num_streams = 8
+                stripe_size = 32 * 1024 * 1024
+            elif filesize >= 64 * 1024 * 1024:
+                num_streams = 6
+                stripe_size = 16 * 1024 * 1024
+            else:
+                num_streams = 4
+                stripe_size = 8 * 1024 * 1024
             total_chunks = (filesize + stripe_size - 1) // stripe_size if filesize > 0 else 1
-
-            num_streams = 6 if filesize >= 64 * 1024 * 1024 else 4
 
             # 1. Connect Control Socket
             ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -3464,7 +3562,7 @@ class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
         self.root = self
-        self.title("AirBeam v5.4 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title("AirBeam v5.5 — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3516,6 +3614,11 @@ class AirBeamSenderApp(BaseTkApp):
         self.iphone_hotspot_password = ""
         self.connected_to_iphone_hotspot = False
         self.win_hotspot_for_iphone_active = False
+        self.active_mobile_mode = "HOME_WIFI"
+        self.active_win_hotspot_wifi_str = "WIFI:T:WPA;S:airbeam;P:airbeam123;;"
+        self.active_win_hotspot_portal_url = f"http://192.168.137.1:{self.iphone_portal_port}/index.html"
+        self.active_pc_hotspot_wifi_str = "WIFI:T:WPA;S:airbeam;P:airbeam123;;"
+        self.active_pc_hotspot_portal_url = f"http://192.168.137.1:{self.iphone_portal_port}/index.html"
         self.load_iphone_hotspot_config()
 
         # iOS stream byte tracker for precision speedometer
@@ -3542,7 +3645,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.4')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.5')
         except Exception:
             pass
 
@@ -3722,6 +3825,61 @@ class AirBeamSenderApp(BaseTkApp):
                 except Exception as e:
                     print(f"Error opening file preview for {fpath}: {e}")
 
+    def _get_active_queue_target(self) -> str:
+        try:
+            if hasattr(self, "notebook"):
+                idx = self.notebook.index(self.notebook.select())
+                return "pc" if idx == 1 else "mobile"
+        except Exception:
+            pass
+        return "mobile"
+
+    def show_qr_zoom_modal(self, url: str, title: str = "Scan QR Code"):
+        if not url:
+            return
+        modal = tk.Toplevel(self)
+        modal.title(title)
+        modal.configure(bg="#0f172a")
+        modal.attributes("-topmost", True)
+        modal.resizable(False, False)
+        modal.transient(self)
+
+        qr_img = self.generate_qr_image(url, box_size=9, border=2)
+
+        container = tk.Frame(modal, bg="#0f172a", padx=24, pady=20)
+        container.pack(fill="both", expand=True)
+
+        tk.Label(container, text=title, bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 12, "bold")).pack(pady=(0, 10))
+
+        lbl_qr = tk.Label(container, bg="#ffffff", bd=4, relief="solid")
+        lbl_qr.pack(pady=6)
+        if qr_img:
+            lbl_qr.config(image=qr_img)
+            lbl_qr.image = qr_img
+
+        url_box = tk.Frame(container, bg="#1e293b", padx=10, pady=6, highlightthickness=1, highlightbackground="#334155")
+        url_box.pack(fill="x", pady=(10, 14))
+        lbl_url = tk.Label(url_box, text=url, bg="#1e293b", fg="#10b981", font=("Segoe UI", 9, "bold"), wraplength=380)
+        lbl_url.pack()
+
+        btn_close = tk.Button(
+            container, text="✕ Close (Esc)", bg="#334155", fg="#f8fafc",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=16, pady=6, cursor="hand2",
+            command=modal.destroy
+        )
+        btn_close.pack()
+        bind_button_hover(btn_close, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
+
+        modal.update_idletasks()
+        w = modal.winfo_reqwidth()
+        h = modal.winfo_reqheight()
+        x = max(0, self.winfo_x() + (self.winfo_width() - w) // 2)
+        y = max(0, self.winfo_y() + (self.winfo_height() - h) // 2)
+        modal.geometry(f"+{x}+{y}")
+
+        modal.bind("<Escape>", lambda e: modal.destroy())
+        modal.focus_set()
+
     def select_all_listbox(self, listbox):
         if listbox and listbox.winfo_exists():
             if listbox == getattr(self, "listbox_pc_files", None):
@@ -3854,14 +4012,7 @@ class AirBeamSenderApp(BaseTkApp):
         # 2. Check for copied text / link
         text = self.get_clipboard_safe()
         if text and text.strip():
-            cur_tab = 0
-            try:
-                if hasattr(self, "notebook"):
-                    cur_tab = self.notebook.index(self.notebook.select())
-            except Exception:
-                cur_tab = 0
-
-            if cur_tab == 1:
+            if self._get_active_queue_target() == "pc":
                 messagebox.showinfo("Clipboard Text", f"Windows Clipboard text:\n\n{text[:160]}...\n\n(To beam this text to mobile devices, switch to the Web Portal tab).")
             else:
                 self.beam_clipboard_to_ios()
@@ -3956,27 +4107,12 @@ class AirBeamSenderApp(BaseTkApp):
             print(f"cleanup_temp_zip exception for {path}: {e}")
 
     def remove_selected_file(self):
+        if not getattr(self, "selected_files", []):
+            return
         if getattr(self, "is_sending", False):
             return
-        sel = []
-        target_lb = None
-        if hasattr(self, "notebook"):
-            try:
-                cur_tab = self.notebook.index(self.notebook.select())
-            except Exception:
-                cur_tab = 0
-        else:
-            cur_tab = 0
-
-        if cur_tab == 2 and hasattr(self, "listbox_ios_files") and self.listbox_ios_files.curselection():
-            target_lb = self.listbox_ios_files
-            sel = list(self.listbox_ios_files.curselection())
-        elif hasattr(self, "listbox_files") and self.listbox_files.curselection():
-            target_lb = self.listbox_files
-            sel = list(self.listbox_files.curselection())
-        elif hasattr(self, "listbox_ios_files") and self.listbox_ios_files.curselection():
-            target_lb = self.listbox_ios_files
-            sel = list(self.listbox_ios_files.curselection())
+        target_lb = getattr(self, "listbox_files", None)
+        sel = list(target_lb.curselection()) if target_lb else []
 
         removed_paths = []
         if not sel:
@@ -3999,6 +4135,8 @@ class AirBeamSenderApp(BaseTkApp):
             target_lb.activate(next_idx)
 
     def remove_selected_pc_file(self):
+        if not getattr(self, "pc_selected_files", []):
+            return
         if getattr(self, "is_pc_sending", False):
             return
         sel = list(self.listbox_pc_files.curselection()) if hasattr(self, "listbox_pc_files") else []
@@ -4136,18 +4274,9 @@ class AirBeamSenderApp(BaseTkApp):
         """Dispatches dropped files anywhere in the app to the active tab's file queue."""
         if not files:
             return
-        current_tab = 0
-        try:
-            if hasattr(self, "notebook"):
-                current_tab = self.notebook.index(self.notebook.select())
-        except Exception:
-            current_tab = 0
-
-        if current_tab == 1:
-            # Tab 1: PC to PC
+        if self._get_active_queue_target() == "pc":
             self._on_pc_files_dropped(files)
         else:
-            # Tab 0: Android, Tab 2: iPhone / iOS, or Tab 3: APK QR fallback
             self._on_main_files_dropped(files)
 
     def on_window_close(self):
@@ -4211,6 +4340,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.5-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.5-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.4-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.4-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.3-Receiver.apk"),
@@ -4557,7 +4688,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_ver_badge = tk.Label(
             brand_frame,
-            text="v5.4",
+            text="v5.5",
             bg="#1e293b",
             fg="#94a3b8",
             font=("Segoe UI", 8, "bold"),
@@ -4653,9 +4784,45 @@ class AirBeamSenderApp(BaseTkApp):
             style="CardBody.TLabel"
         ).pack(anchor="w", pady=(2, 0))
 
+        # 3. Compact 4-Mode Switcher Bar
+        self.pill_bar = tk.Frame(container, bg="#0f172a")
+        self.pill_bar.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.btn_pill_home = tk.Button(
+            self.pill_bar, text="🏠 1. Home Wi-Fi (Instant QR)",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=6, cursor="hand2",
+            command=lambda: self.select_mobile_connection_mode("HOME_WIFI")
+        )
+        self.btn_pill_home.pack(side="left", fill="x", expand=True, padx=(0, 3))
+
+        self.btn_pill_win_hotspot = tk.Button(
+            self.pill_bar, text="📡 2. Windows 5 GHz Hotspot",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=6, cursor="hand2",
+            command=lambda: self.select_mobile_connection_mode("WIN_HOTSPOT")
+        )
+        self.btn_pill_win_hotspot.pack(side="left", fill="x", expand=True, padx=3)
+
+        self.btn_pill_phone_hotspot = tk.Button(
+            self.pill_bar, text="📱 3. Phone Personal Hotspot",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=6, cursor="hand2",
+            command=lambda: self.select_mobile_connection_mode("PHONE_HOTSPOT")
+        )
+        self.btn_pill_phone_hotspot.pack(side="left", fill="x", expand=True, padx=3)
+
+        self.btn_pill_native_android = tk.Button(
+            self.pill_bar, text="⚡ 4. Native Android App (TCP Turbo)",
+            font=("Segoe UI", 9, "bold"), relief="flat", bd=0, padx=8, pady=6, cursor="hand2",
+            command=lambda: self.select_mobile_connection_mode("NATIVE_ANDROID")
+        )
+        self.btn_pill_native_android.pack(side="left", fill="x", expand=True, padx=(3, 0))
+
+        # Dynamic mode container holding the 4 option cards
+        self.mobile_mode_container = tk.Frame(container, bg="#0f172a")
+        self.mobile_mode_container.pack(fill="x", padx=0, pady=0)
+
         # --- OPTION 1: Transfer Over Home Wi-Fi Router (Zero Hotspot Required) ---
-        opt3_card = ttk.Frame(container, style="Card.TFrame", padding=14)
-        opt3_card.pack(fill="x", padx=10, pady=(0, 10))
+        self.opt3_card = ttk.Frame(self.mobile_mode_container, style="Card.TFrame", padding=14)
+        opt3_card = self.opt3_card
 
         ttk.Label(opt3_card, text="Option 1 (Recommended — Zero Setup): 🏠 Transfer Over Home Wi-Fi Router", style="CardHeader.TLabel").pack(anchor="w")
         home_name = get_best_home_wifi_profile(self) or "Home Wi-Fi"
@@ -4671,8 +4838,8 @@ class AirBeamSenderApp(BaseTkApp):
         self.build_opt3_view()
 
         # --- OPTION 2: Windows 5 GHz Mobile Hotspot (1-Tap Auto-Join) ---
-        opt1_card = ttk.Frame(container, style="Card.TFrame", padding=14)
-        opt1_card.pack(fill="x", padx=10, pady=(0, 10))
+        self.opt1_card = ttk.Frame(self.mobile_mode_container, style="Card.TFrame", padding=14)
+        opt1_card = self.opt1_card
 
         opt1_top = tk.Frame(opt1_card, bg="#1e293b")
         opt1_top.pack(fill="x", pady=(0, 8))
@@ -4699,16 +4866,24 @@ class AirBeamSenderApp(BaseTkApp):
         step1_box.pack(side="left", fill="both", expand=True, padx=(0, 6))
         tk.Label(step1_box, text="STEP 1: Join Wi-Fi Hotspot", bg="#0f172a", fg="#10b981", font=("Segoe UI", 10, "bold")).pack()
         tk.Label(step1_box, text="Point Camera here → Tap 'Join Network'", bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(2, 6))
-        self.qr_ios_wifi_label = tk.Label(step1_box, bg="#0f172a")
+        self.qr_ios_wifi_label = tk.Label(step1_box, bg="#0f172a", cursor="hand2")
         self.qr_ios_wifi_label.pack(pady=4)
+        self.qr_ios_wifi_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_wifi_str", "") or "WIFI:T:WPA;S:airbeam;P:airbeam123;;", "Windows Hotspot Wi-Fi Auto-Join QR"))
+        lbl_zoom_w = tk.Label(step1_box, text="🔍 Click QR to enlarge", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 8, "bold"), cursor="hand2")
+        lbl_zoom_w.pack(pady=(0, 2))
+        lbl_zoom_w.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_wifi_str", "") or "WIFI:T:WPA;S:airbeam;P:airbeam123;;", "Windows Hotspot Wi-Fi Auto-Join QR"))
 
         # Right QR: Step 2 Open AirBeam Portal
         step2_box = tk.Frame(self.qr_dual_frame, bg="#0f172a", padx=12, pady=10, highlightbackground="#334155", highlightthickness=1)
         step2_box.pack(side="right", fill="both", expand=True, padx=(6, 0))
         tk.Label(step2_box, text="STEP 2: Open AirBeam Web Portal", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 10, "bold")).pack()
         tk.Label(step2_box, text="Point Camera here → Tap 'Open in Browser'", bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(2, 6))
-        self.qr_ios_portal_label = tk.Label(step2_box, bg="#0f172a")
+        self.qr_ios_portal_label = tk.Label(step2_box, bg="#0f172a", cursor="hand2")
         self.qr_ios_portal_label.pack(pady=4)
+        self.qr_ios_portal_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "Windows Hotspot Web Portal QR"))
+        lbl_zoom_p = tk.Label(step2_box, text="🔍 Click QR to enlarge", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 8, "bold"), cursor="hand2")
+        lbl_zoom_p.pack(pady=(0, 2))
+        lbl_zoom_p.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "Windows Hotspot Web Portal QR"))
 
         self.lbl_ios_win_hotspot_creds = tk.Label(
             opt1_card, text="Turn ON switch above to generate Wi-Fi Auto-Join & Web Portal QR codes.",
@@ -4769,8 +4944,8 @@ class AirBeamSenderApp(BaseTkApp):
         tk.Label(win_guide_box, text="5️⃣ Instant Alternative: Use Option 1 at the top! It connects instantly over Home Wi-Fi with ZERO hotspot toggling.", bg="#162032", fg="#10b981", font=("Segoe UI", 8, "bold"), justify="left").pack(anchor="w", pady=(2, 0))
 
         # --- OPTION 3: Connect PC to Phone / Tablet Personal Hotspot ---
-        opt2_card = ttk.Frame(container, style="Card.TFrame", padding=14)
-        opt2_card.pack(fill="x", padx=10, pady=(0, 10))
+        self.opt2_card = ttk.Frame(self.mobile_mode_container, style="Card.TFrame", padding=14)
+        opt2_card = self.opt2_card
 
         ttk.Label(opt2_card, text="Option 3: 📶 Connect PC to Phone / Tablet Personal Hotspot (Phone Hotspot ➔ PC)", style="CardHeader.TLabel").pack(anchor="w")
         ttk.Label(opt2_card, text="Turn ON Personal Hotspot in your iPhone or Android Settings (5 GHz). Toggle switch below or connect directly via Windows Wi-Fi flyout.", style="CardBody.TLabel").pack(anchor="w", pady=(2, 8))
@@ -4825,129 +5000,9 @@ class AirBeamSenderApp(BaseTkApp):
         self.active_opt2_portal_url = None
         self.build_opt2_disconnected_view()
 
-        # --- CARD 4: Files Staged for Mobile & Web Portal ---
-        files_card = ttk.Frame(container, style="Card.TFrame", padding=14)
-        files_card.pack(fill="x", padx=10, pady=(0, 10))
-
-        top_file_bar = tk.Frame(files_card, bg="#1e293b")
-        top_file_bar.pack(fill="x", pady=(0, 8))
-
-        ttk.Label(top_file_bar, text="📁 Files Staged for Mobile & Web Portal", style="CardHeader.TLabel").pack(side="left")
-
-        btn_clipboard = ttk.Button(top_file_bar, text="📋 Send Clipboard", style="Secondary.TButton", command=self.beam_clipboard_to_ios)
-        btn_clipboard.pack(side="right", padx=(4, 0))
-
-        btn_add_files = ttk.Button(top_file_bar, text="+ Add Files", style="Primary.TButton", command=self.add_files)
-        btn_add_files.pack(side="right", padx=4)
-
-        btn_add_folder = ttk.Button(top_file_bar, text="+ Add Folder", style="Secondary.TButton", command=self.add_folder)
-        btn_add_folder.pack(side="right", padx=4)
-
-        btn_remove = ttk.Button(top_file_bar, text="➖ Remove", style="Secondary.TButton", command=self.remove_selected_file)
-        btn_remove.pack(side="right", padx=4)
-
-        btn_clear = ttk.Button(top_file_bar, text="Clear", style="Secondary.TButton", command=self.clear_files)
-        btn_clear.pack(side="right")
-
-        list_frame = tk.Frame(files_card, bg="#0f172a")
-        list_frame.pack(fill="x", expand=True)
-
-        scrollbar = tk.Scrollbar(list_frame)
-        scrollbar.pack(side="right", fill="y")
-
-        self.listbox_files = tk.Listbox(
-            list_frame,
-            height=6,
-            bg="#0b1120",
-            fg="#f8fafc",
-            selectmode=tk.EXTENDED,
-            selectbackground="#2563eb",
-            selectforeground="#ffffff",
-            activestyle="none",
-            font=("Segoe UI", 9),
-            bd=0,
-            highlightthickness=1,
-            highlightbackground="#334155",
-            highlightcolor="#3b82f6",
-            yscrollcommand=scrollbar.set
-        )
-        self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
-        scrollbar.config(command=self.listbox_files.yview)
-
-        # Backwards compatibility alias
-        self.listbox_ios_files = self.listbox_files
-
-        self.listbox_files.bind("<Delete>", lambda e: (self.remove_selected_file(), "break")[1])
-        self.listbox_files.bind("<BackSpace>", lambda e: (self.remove_selected_file(), "break")[1])
-        self.listbox_files.bind("<Double-Button-1>", lambda e: self.preview_selected_file(e, self.listbox_files, self.selected_files))
-        self.listbox_files.bind("<Control-a>", lambda e: self.select_all_listbox(self.listbox_files))
-        self.listbox_files.bind("<Control-A>", lambda e: self.select_all_listbox(self.listbox_files))
-
-        self.register_drop_target(files_card)
-        self.register_drop_target(self.listbox_files)
-
-        self.lbl_total_size = tk.Label(
-            files_card,
-            text="0 files selected (0 B) — Drag & drop files anywhere in window or click '+ Add Files' above",
-            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
-        )
-        self.lbl_total_size.pack(anchor="w", pady=(6, 0))
-        self.lbl_ios_total_size = self.lbl_total_size
-
-        # --- CARD 5: Received Files & Live Web Portal Telemetry ---
-        rx_tools_card = ttk.Frame(container, style="Card.TFrame", padding=14)
-        rx_tools_card.pack(fill="x", padx=10, pady=(0, 10))
-
-        top_rx_tools = tk.Frame(rx_tools_card, bg="#1e293b")
-        top_rx_tools.pack(fill="x", pady=(0, 8))
-
-        ttk.Label(top_rx_tools, text="📥 Received Files & Live Web Portal Telemetry", style="CardHeader.TLabel").pack(side="left")
-
-        chk_ios_auto_open = tk.Checkbutton(
-            top_rx_tools,
-            text="☑ Auto-open folder on arrival",
-            variable=self.auto_open_incoming_var,
-            command=self.on_toggle_auto_open_incoming,
-            bg="#1e293b", fg="#cbd5e1", selectcolor="#0f172a",
-            activebackground="#1e293b", activeforeground="#38bdf8",
-            font=("Segoe UI", 9)
-        )
-        chk_ios_auto_open.pack(side="right")
-
-        rx_btn_bar = tk.Frame(rx_tools_card, bg="#1e293b")
-        rx_btn_bar.pack(fill="x", pady=(0, 8))
-
-        btn_open_iphone_rx = ttk.Button(rx_btn_bar, text="📂 Open Received_From_iPhone", style="Primary.TButton", command=self.open_iphone_received_folder)
-        btn_open_iphone_rx.pack(side="left", padx=(0, 6))
-
-        btn_open_android_rx = ttk.Button(rx_btn_bar, text="📂 Open Received_From_Android", style="Primary.TButton", command=self.open_android_received_folder)
-        btn_open_android_rx.pack(side="left", padx=(0, 6))
-
-        btn_clear_recv = ttk.Button(rx_btn_bar, text="🧹 Clear All Uploads", style="Secondary.TButton", command=self.clear_all_received_folders)
-        btn_clear_recv.pack(side="left", padx=(0, 6))
-
-        btn_ref_qr = ttk.Button(rx_btn_bar, text="🔄 Refresh QR", style="Secondary.TButton", command=self.refresh_ios_qr_codes)
-        btn_ref_qr.pack(side="left")
-
-        # Live file counts summary
-        self.lbl_ios_files_summary = tk.Label(
-            rx_tools_card, text="📤 Staged: 0 file(s) (0 B)  •  📥 Received iPhone: 0 file(s) (0 B)  •  📥 Received Android: 0 file(s) (0 B)",
-            bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9), anchor="w"
-        )
-        self.lbl_ios_files_summary.pack(fill="x", pady=(4, 6))
-        rx_tools_card.bind("<Configure>", lambda e: self.lbl_ios_files_summary.config(wraplength=max(200, e.width - 28)))
-        self.update_ios_files_summary()
-
-        # Live Speedometer readout
-        self.lbl_ios_live_speed = tk.Label(
-            rx_tools_card, text=f"⚡ Web Portal Status: Active on Port {self.iphone_portal_port} | Live Speed: 0.0 MB/s",
-            bg="#0f172a", fg="#10b981", font=("Segoe UI", 10, "bold"), padx=12, pady=8
-        )
-        self.lbl_ios_live_speed.pack(fill="x")
-
-        # --- CARD 6: Native Android Receiver App (Direct Socket Beam 50-95+ MB/s) ---
-        android_app_card = ttk.Frame(container, style="Card.TFrame", padding=14)
-        android_app_card.pack(fill="x", padx=10, pady=(0, 14))
+        # --- OPTION 4: Native Android Receiver App (Direct Socket Beam 50–95+ MB/s) ---
+        self.android_app_card = ttk.Frame(self.mobile_mode_container, style="Card.TFrame", padding=14)
+        android_app_card = self.android_app_card
 
         top_app = tk.Frame(android_app_card, bg="#1e293b")
         top_app.pack(fill="x", pady=(0, 4))
@@ -5064,8 +5119,171 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_report = ttk.Button(ctrl_frame, text="📊 Speed Report", style="Secondary.TButton", command=self.generate_speed_report)
         self.btn_report.pack(side="right", padx=(6, 0))
 
+        # --- CARD 5: Files Staged for Mobile & Web Portal ---
+        files_card = ttk.Frame(container, style="Card.TFrame", padding=14)
+        files_card.pack(fill="x", padx=10, pady=(0, 10))
+
+        top_file_bar = tk.Frame(files_card, bg="#1e293b")
+        top_file_bar.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(top_file_bar, text="📁 Files Staged for Mobile & Web Portal", style="CardHeader.TLabel").pack(side="left")
+
+        btn_clipboard = ttk.Button(top_file_bar, text="📋 Send Clipboard", style="Secondary.TButton", command=self.beam_clipboard_to_ios)
+        btn_clipboard.pack(side="right", padx=(4, 0))
+
+        btn_add_files = ttk.Button(top_file_bar, text="+ Add Files", style="Primary.TButton", command=self.add_files)
+        btn_add_files.pack(side="right", padx=4)
+
+        btn_add_folder = ttk.Button(top_file_bar, text="+ Add Folder", style="Secondary.TButton", command=self.add_folder)
+        btn_add_folder.pack(side="right", padx=4)
+
+        btn_remove = ttk.Button(top_file_bar, text="➖ Remove", style="Secondary.TButton", command=self.remove_selected_file)
+        btn_remove.pack(side="right", padx=4)
+
+        btn_clear = ttk.Button(top_file_bar, text="Clear", style="Secondary.TButton", command=self.clear_files)
+        btn_clear.pack(side="right")
+
+        list_frame = tk.Frame(files_card, bg="#0f172a")
+        list_frame.pack(fill="x", expand=True)
+
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        self.listbox_files = tk.Listbox(
+            list_frame,
+            height=6,
+            bg="#0b1120",
+            fg="#f8fafc",
+            selectmode=tk.EXTENDED,
+            selectbackground="#2563eb",
+            selectforeground="#ffffff",
+            activestyle="none",
+            font=("Segoe UI", 9),
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#334155",
+            highlightcolor="#3b82f6",
+            yscrollcommand=scrollbar.set
+        )
+        self.listbox_files.pack(fill="both", expand=True, padx=4, pady=4)
+        scrollbar.config(command=self.listbox_files.yview)
+
+        # Backwards compatibility alias
+        self.listbox_ios_files = self.listbox_files
+
+        self.listbox_files.bind("<Delete>", lambda e: (self.remove_selected_file(), "break")[1])
+        self.listbox_files.bind("<BackSpace>", lambda e: (self.remove_selected_file(), "break")[1])
+        self.listbox_files.bind("<Double-Button-1>", lambda e: self.preview_selected_file(e, self.listbox_files, self.selected_files))
+        self.listbox_files.bind("<Control-a>", lambda e: self.select_all_listbox(self.listbox_files))
+        self.listbox_files.bind("<Control-A>", lambda e: self.select_all_listbox(self.listbox_files))
+
+        self.register_drop_target(files_card)
+        self.register_drop_target(self.listbox_files)
+
+        self.lbl_total_size = tk.Label(
+            files_card,
+            text="0 files selected (0 B) — Drag & drop files anywhere in window or click '+ Add Files' above",
+            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9)
+        )
+        self.lbl_total_size.pack(anchor="w", pady=(6, 0))
+        self.lbl_ios_total_size = self.lbl_total_size
+
+        # --- CARD 6: Received Files & Live Web Portal Telemetry ---
+        rx_tools_card = ttk.Frame(container, style="Card.TFrame", padding=14)
+        rx_tools_card.pack(fill="x", padx=10, pady=(0, 10))
+
+        top_rx_tools = tk.Frame(rx_tools_card, bg="#1e293b")
+        top_rx_tools.pack(fill="x", pady=(0, 8))
+
+        ttk.Label(top_rx_tools, text="📥 Received Files & Live Web Portal Telemetry", style="CardHeader.TLabel").pack(side="left")
+
+        chk_ios_auto_open = tk.Checkbutton(
+            top_rx_tools,
+            text="☑ Auto-open folder on arrival",
+            variable=self.auto_open_incoming_var,
+            command=self.on_toggle_auto_open_incoming,
+            bg="#1e293b", fg="#cbd5e1", selectcolor="#0f172a",
+            activebackground="#1e293b", activeforeground="#38bdf8",
+            font=("Segoe UI", 9)
+        )
+        chk_ios_auto_open.pack(side="right")
+
+        rx_btn_bar = tk.Frame(rx_tools_card, bg="#1e293b")
+        rx_btn_bar.pack(fill="x", pady=(0, 8))
+
+        btn_open_iphone_rx = ttk.Button(rx_btn_bar, text="📂 Open Received_From_iPhone", style="Primary.TButton", command=self.open_iphone_received_folder)
+        btn_open_iphone_rx.pack(side="left", padx=(0, 6))
+
+        btn_open_android_rx = ttk.Button(rx_btn_bar, text="📂 Open Received_From_Android", style="Primary.TButton", command=self.open_android_received_folder)
+        btn_open_android_rx.pack(side="left", padx=(0, 6))
+
+        btn_clear_recv = ttk.Button(rx_btn_bar, text="🧹 Clear All Uploads", style="Secondary.TButton", command=self.clear_all_received_folders)
+        btn_clear_recv.pack(side="left", padx=(0, 6))
+
+        btn_ref_qr = ttk.Button(rx_btn_bar, text="🔄 Refresh QR", style="Secondary.TButton", command=self.refresh_ios_qr_codes)
+        btn_ref_qr.pack(side="left")
+
+        # Live file counts summary
+        self.lbl_ios_files_summary = tk.Label(
+            rx_tools_card, text="📤 Staged: 0 file(s) (0 B)  •  📥 Received iPhone: 0 file(s) (0 B)  •  📥 Received Android: 0 file(s) (0 B)",
+            bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9), anchor="w"
+        )
+        self.lbl_ios_files_summary.pack(fill="x", pady=(4, 6))
+        rx_tools_card.bind("<Configure>", lambda e: self.lbl_ios_files_summary.config(wraplength=max(200, e.width - 28)))
+        self.update_ios_files_summary()
+
+        # Live Speedometer readout
+        self.lbl_ios_live_speed = tk.Label(
+            rx_tools_card, text=f"⚡ Web Portal Status: Active on Port {self.iphone_portal_port} | Live Speed: 0.0 MB/s",
+            bg="#0f172a", fg="#10b981", font=("Segoe UI", 10, "bold"), padx=12, pady=8
+        )
+        self.lbl_ios_live_speed.pack(fill="x")
+
         # Initialize default placeholder QR codes
         self.reset_ios_qr_placeholders()
+
+        # Activate default Mode (Home Wi-Fi)
+        self.select_mobile_connection_mode("HOME_WIFI")
+
+    build_send_tab = build_web_portal_tab
+    build_ios_tab = build_web_portal_tab
+
+    def select_mobile_connection_mode(self, mode_id: str):
+        self.active_mobile_mode = mode_id
+        for card in (getattr(self, "opt3_card", None),
+                     getattr(self, "opt1_card", None),
+                     getattr(self, "opt2_card", None),
+                     getattr(self, "android_app_card", None)):
+            if card and card.winfo_exists():
+                card.pack_forget()
+
+        pills = {
+            "HOME_WIFI": getattr(self, "btn_pill_home", None),
+            "WIN_HOTSPOT": getattr(self, "btn_pill_win_hotspot", None),
+            "PHONE_HOTSPOT": getattr(self, "btn_pill_phone_hotspot", None),
+            "NATIVE_ANDROID": getattr(self, "btn_pill_native_android", None),
+        }
+        for mid, btn in pills.items():
+            if btn and btn.winfo_exists():
+                if mid == mode_id:
+                    btn.config(bg="#0284c7", fg="#ffffff", highlightthickness=1, highlightbackground="#38bdf8")
+                    bind_button_hover(btn, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
+                else:
+                    btn.config(bg="#1e293b", fg="#94a3b8", highlightthickness=1, highlightbackground="#334155")
+                    bind_button_hover(btn, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#94a3b8", hover_fg="#ffffff")
+
+        if mode_id == "HOME_WIFI":
+            if hasattr(self, "opt3_card") and self.opt3_card.winfo_exists():
+                self.opt3_card.pack(fill="x", padx=10, pady=(0, 10))
+        elif mode_id == "WIN_HOTSPOT":
+            if hasattr(self, "opt1_card") and self.opt1_card.winfo_exists():
+                self.opt1_card.pack(fill="x", padx=10, pady=(0, 10))
+        elif mode_id == "PHONE_HOTSPOT":
+            if hasattr(self, "opt2_card") and self.opt2_card.winfo_exists():
+                self.opt2_card.pack(fill="x", padx=10, pady=(0, 10))
+        elif mode_id == "NATIVE_ANDROID":
+            if hasattr(self, "android_app_card") and self.android_app_card.winfo_exists():
+                self.android_app_card.pack(fill="x", padx=10, pady=(0, 10))
 
     build_send_tab = build_web_portal_tab
     build_ios_tab = build_web_portal_tab
@@ -5336,17 +5554,23 @@ class AirBeamSenderApp(BaseTkApp):
         box_qr_wifi = tk.Frame(qr_ht_frame, bg="#162032", padx=6, pady=4, highlightthickness=1, highlightbackground="#334155")
         box_qr_wifi.pack(side="left", padx=4)
         tk.Label(box_qr_wifi, text="📶 Connect Wi-Fi", bg="#162032", fg="#38bdf8", font=("Segoe UI", 8, "bold")).pack()
-        self.qr_pc_hotspot_wifi_label = tk.Label(box_qr_wifi, bg="#162032")
+        self.qr_pc_hotspot_wifi_label = tk.Label(box_qr_wifi, bg="#162032", cursor="hand2")
         self.qr_pc_hotspot_wifi_label.pack(pady=2)
-        tk.Label(box_qr_wifi, text="Scan to auto-join hotspot", bg="#162032", fg="#64748b", font=("Segoe UI", 7)).pack()
+        self.qr_pc_hotspot_wifi_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_wifi_str", "") or "WIFI:T:WPA;S:airbeam;P:airbeam123;;", "PC Hotspot Wi-Fi Auto-Join QR"))
+        lbl_zoom_pc_w = tk.Label(box_qr_wifi, text="🔍 Click to enlarge", bg="#162032", fg="#38bdf8", font=("Segoe UI", 7, "bold"), cursor="hand2")
+        lbl_zoom_pc_w.pack()
+        lbl_zoom_pc_w.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_wifi_str", "") or "WIFI:T:WPA;S:airbeam;P:airbeam123;;", "PC Hotspot Wi-Fi Auto-Join QR"))
 
         # QR 2: Web Portal Link
         box_qr_portal = tk.Frame(qr_ht_frame, bg="#162032", padx=6, pady=4, highlightthickness=1, highlightbackground="#334155")
         box_qr_portal.pack(side="left", padx=4)
         tk.Label(box_qr_portal, text="🌐 Open Web Portal", bg="#162032", fg="#10b981", font=("Segoe UI", 8, "bold")).pack()
-        self.qr_pc_hotspot_portal_label = tk.Label(box_qr_portal, bg="#162032")
+        self.qr_pc_hotspot_portal_label = tk.Label(box_qr_portal, bg="#162032", cursor="hand2")
         self.qr_pc_hotspot_portal_label.pack(pady=2)
-        tk.Label(box_qr_portal, text="Scan to transfer via browser", bg="#162032", fg="#64748b", font=("Segoe UI", 7)).pack()
+        self.qr_pc_hotspot_portal_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "PC Hotspot Web Portal QR"))
+        lbl_zoom_pc_p = tk.Label(box_qr_portal, text="🔍 Click to enlarge", bg="#162032", fg="#38bdf8", font=("Segoe UI", 7, "bold"), cursor="hand2")
+        lbl_zoom_pc_p.pack()
+        lbl_zoom_pc_p.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "PC Hotspot Web Portal QR"))
 
         self.reset_pc_hotspot_qr_placeholders()
 
@@ -5560,8 +5784,12 @@ class AirBeamSenderApp(BaseTkApp):
         qr_card = tk.Frame(web_mid_row, bg="#0f172a", padx=8, pady=6, highlightthickness=1, highlightbackground="#334155")
         qr_card.pack(side="right")
         tk.Label(qr_card, text="🌐 Web Portal Link", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 8, "bold")).pack()
-        self.qr_pc_web_label = tk.Label(qr_card, bg="#0f172a")
+        self.qr_pc_web_label = tk.Label(qr_card, bg="#0f172a", cursor="hand2")
         self.qr_pc_web_label.pack(pady=2)
+        self.qr_pc_web_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(f"http://{self.local_ip}:{self.iphone_portal_port}/index.html", "PC Web Portal QR"))
+        lbl_zoom_pc_web = tk.Label(qr_card, text="🔍 Click to enlarge", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 7, "bold"), cursor="hand2")
+        lbl_zoom_pc_web.pack()
+        lbl_zoom_pc_web.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(f"http://{self.local_ip}:{self.iphone_portal_port}/index.html", "PC Web Portal QR"))
         tk.Label(qr_card, text="Scan with 2nd PC camera or phone", bg="#0f172a", fg="#64748b", font=("Segoe UI", 7)).pack()
         if img_qr:
             self.qr_pc_web_label.config(image=img_qr)
@@ -5596,12 +5824,15 @@ class AirBeamSenderApp(BaseTkApp):
         if not self.pc_selected_files:
             empty_msg = "   📂  No files staged yet. Drag & drop files or folders here, or click '+ Add Files' above"
             if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
+                self.listbox_pc_files.config(fg="#64748B")
                 self.listbox_pc_files.insert(tk.END, empty_msg)
                 try:
-                    self.listbox_pc_files.itemconfig(0, fg="#64748b")
+                    self.listbox_pc_files.itemconfig(0, fg="#64748B")
                 except Exception:
                     pass
         else:
+            if hasattr(self, "listbox_pc_files") and self.listbox_pc_files.winfo_exists():
+                self.listbox_pc_files.config(fg="#F8FAFC")
             for f in self.pc_selected_files:
                 if os.path.exists(f):
                     sz = os.path.getsize(f)
@@ -5614,6 +5845,8 @@ class AirBeamSenderApp(BaseTkApp):
             self.lbl_pc_total_size.config(
                 text=f"{count} file(s) selected ({size_str}) — Drag & drop files anywhere in window or click '+ Add Files' above"
             )
+
+    refresh_pc_file_list = update_pc_file_listbox
 
     def start_pc_send_thread(self):
         target = self.target_pc_ip.get().strip()
@@ -6019,6 +6252,8 @@ class AirBeamSenderApp(BaseTkApp):
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
                     portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+                    self.active_pc_hotspot_wifi_str = wifi_qr
+                    self.active_pc_hotspot_portal_url = portal_url
                     img_wifi = self.generate_qr_image(wifi_qr, box_size=3, border=2)
                     img_portal = self.generate_qr_image(portal_url, box_size=3, border=2)
                     def update_ui():
@@ -6093,10 +6328,14 @@ class AirBeamSenderApp(BaseTkApp):
         ttk.Label(container, text=f"Install {apk_filename} on Android", style="CardHeader.TLabel").pack(anchor="center")
         ttk.Label(container, text="Scan with your tablet camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
 
-        self.qr_label = tk.Label(container, bg="#1e293b")
-        self.qr_label.pack(anchor="center", pady=10)
-
         apk_url = f"http://{self.local_ip}:{APK_SERVER_PORT}/download"
+        self.apk_download_url = apk_url
+        self.qr_label = tk.Label(container, bg="#1e293b", cursor="hand2")
+        self.qr_label.pack(anchor="center", pady=(10, 2))
+        self.qr_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "apk_download_url", apk_url), "AirBeam Receiver APK Download QR"))
+        lbl_zoom_apk = tk.Label(container, text="🔍 Click QR to enlarge", bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), cursor="hand2")
+        lbl_zoom_apk.pack(anchor="center", pady=(0, 6))
+        lbl_zoom_apk.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "apk_download_url", apk_url), "AirBeam Receiver APK Download QR"))
         self.lbl_apk_url = tk.Label(container, text=f"Direct Link: {apk_url}\nFile: {apk_filename}", bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 10, "bold"), justify="center")
         self.lbl_apk_url.pack(anchor="center", pady=8)
 
@@ -6181,6 +6420,7 @@ class AirBeamSenderApp(BaseTkApp):
 
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
                     portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+                    self.active_win_hotspot_wifi_str = wifi_qr
                     self.active_win_hotspot_portal_url = portal_url
 
                     img_wifi = self.generate_qr_image(wifi_qr, box_size=4, border=2)
@@ -6373,12 +6613,16 @@ class AirBeamSenderApp(BaseTkApp):
         qr_box.pack(side="left", padx=(0, 12))
 
         tk.Label(qr_box, text="📲 Scan with iPhone Camera", bg="#1e293b", fg="#10b981", font=("Segoe UI", 9, "bold")).pack(pady=(0, 2))
-        self.qr_opt2_label = tk.Label(qr_box, bg="#1e293b")
+        self.qr_opt2_label = tk.Label(qr_box, bg="#1e293b", cursor="hand2")
         self.qr_opt2_label.pack(pady=2)
         if img_portal:
             self.qr_opt2_label.config(image=img_portal)
             self.qr_opt2_label.image = img_portal
-        tk.Label(qr_box, text="Tap yellow banner to open Safari", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(2, 0))
+        self.qr_opt2_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_opt2_portal_url", None) or portal_url, "Option 3: Phone Hotspot Web Portal QR"))
+        lbl_zoom2 = tk.Label(qr_box, text="🔍 Click QR to enlarge", bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 8, "bold"), cursor="hand2")
+        lbl_zoom2.pack(pady=(0, 2))
+        lbl_zoom2.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_opt2_portal_url", None) or portal_url, "Option 3: Phone Hotspot Web Portal QR"))
+        tk.Label(qr_box, text="Tap yellow banner to open Safari", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(1, 0))
 
         # Right Column: Live Status & Next Actions
         info_box = tk.Frame(top_row, bg="#0f172a")
@@ -6465,12 +6709,16 @@ class AirBeamSenderApp(BaseTkApp):
         qr_box.pack(side="left", padx=(0, 12))
 
         tk.Label(qr_box, text="📲 Scan with Phone Camera", bg="#1e293b", fg="#10b981", font=("Segoe UI", 9, "bold")).pack(pady=(0, 2))
-        self.qr_opt3_label = tk.Label(qr_box, bg="#1e293b")
+        self.qr_opt3_label = tk.Label(qr_box, bg="#1e293b", cursor="hand2")
         self.qr_opt3_label.pack(pady=2)
         if img_portal:
             self.qr_opt3_label.config(image=img_portal)
             self.qr_opt3_label.image = img_portal
-        tk.Label(qr_box, text="Tap banner to open Safari or Chrome", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(2, 0))
+        self.qr_opt3_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_opt3_portal_url", None) or portal_url, "Option 1: Home Wi-Fi Web Portal QR"))
+        lbl_zoom = tk.Label(qr_box, text="🔍 Click QR to enlarge", bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 8, "bold"), cursor="hand2")
+        lbl_zoom.pack(pady=(0, 2))
+        lbl_zoom.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_opt3_portal_url", None) or portal_url, "Option 1: Home Wi-Fi Web Portal QR"))
+        tk.Label(qr_box, text="Tap banner to open Safari or Chrome", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(1, 0))
 
         # Right Column: Live Status & Actions
         info_box = tk.Frame(top_row, bg="#0f172a")
@@ -6997,18 +7245,24 @@ class AirBeamSenderApp(BaseTkApp):
         if not self.selected_files:
             empty_msg = "   📂  No files staged yet. Drag & drop files or folders here, or click '+ Add Files'"
             if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
+                self.listbox_files.config(fg="#64748B")
                 self.listbox_files.insert(tk.END, empty_msg)
                 try:
-                    self.listbox_files.itemconfig(0, fg="#64748b")
+                    self.listbox_files.itemconfig(0, fg="#64748B")
                 except Exception:
                     pass
             if hasattr(self, "listbox_ios_files") and self.listbox_ios_files.winfo_exists() and self.listbox_ios_files is not self.listbox_files:
+                self.listbox_ios_files.config(fg="#64748B")
                 self.listbox_ios_files.insert(tk.END, empty_msg)
                 try:
-                    self.listbox_ios_files.itemconfig(0, fg="#64748b")
+                    self.listbox_ios_files.itemconfig(0, fg="#64748B")
                 except Exception:
                     pass
         else:
+            if hasattr(self, "listbox_files") and self.listbox_files.winfo_exists():
+                self.listbox_files.config(fg="#F8FAFC")
+            if hasattr(self, "listbox_ios_files") and self.listbox_ios_files.winfo_exists() and self.listbox_ios_files is not self.listbox_files:
+                self.listbox_ios_files.config(fg="#F8FAFC")
             for f in self.selected_files:
                 try:
                     size = os.path.getsize(f)

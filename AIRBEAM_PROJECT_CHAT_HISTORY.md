@@ -1428,3 +1428,51 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Removed obsolete v5.3 setup binaries from `setup-output/`.
 5. **Remote GitHub Synchronization**:
    - Synchronized all code, documentation, and release artifacts to GitHub repository (`ymaged027/AirBeam` on `main`).
+
+---
+
+## 42. AirBeam v5.5 — Compact 4-Mode Switcher UI, QR Zoom Modal, Zero-Copy Speed Boost & Bug Fixes
+
+### User Request:
+Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.4 to v5.5 by addressing 5 main requirements:
+1. Fix 3 subtle edge-case bugs:
+   - Empty-state placeholder color & selection bug in `refresh_file_list` and `update_pc_file_listbox` (set `#F8FAFC` when files > 0, `#64748B` when empty; early return in remove/select-all handlers if empty).
+   - Audit 3-tab index routing after Phase 40 consolidation: ensure `_get_active_queue_target() -> str` returns `"pc"` for Tab 1 and `"mobile"` for Tabs 0 & 2.
+   - Multi-query parameter concatenation in Web Portal `uploadSingleFile`: use `URLSearchParams` to avoid duplicate `?`.
+2. Compact 4-Mode Switcher UI on Tab 0 & Click-to-Zoom QR Modal:
+   - 4-pill horizontal selector bar directly below Wi-Fi telemetry (`[ 🏠 1. Home Wi-Fi ]`, `[ 📡 2. Windows 5 GHz Hotspot ]`, `[ 📱 3. Phone Personal Hotspot ]`, `[ ⚡ 4. Native Android App ]`).
+   - Pack only the active mode's card inside `self.mobile_mode_container` while keeping the Staged Files Queue & Received Files visible below without scrolling.
+   - Click-to-enlarge high-contrast QR modal (`show_qr_zoom_modal`) bound to `<Button-1>` with `cursor="hand2"` on all QR code labels across the app.
+3. Transfer Speed Upgrades:
+   - Kernel zero-copy `sendfile()` & HTTP 206 Range support in Web Portal `GET /download/<idx>` with 16 MB socket send buffer.
+   - 8 MB buffered writes (`buffering=8*1024*1024`) & 2 MB reads with `SO_RCVBUF = 16 MB` on Web Portal `POST /upload`.
+   - Parallel 2-stream queue in Web Portal JavaScript for small/medium files (< 32 MB), sequential for $\ge 32$ MB.
+   - Adaptive 8-stream turbo mode in `HighSpeedTransferEngine` ($\ge 512$ MB: 8 streams / 32 MB stripe; $64–512$ MB: 6 streams / 16 MB stripe; $< 64$ MB: 4 streams / 8 MB stripe), `CHUNK_SLICE_BYTES = 4 MB`, `SOCKET_SNDBUF_SIZE = 16 MB`, and `SO_RCVBUF = 16 MB`.
+4. Usability Enhancements:
+   - 1-tap `[ 📋 Copy to Phone Clipboard ]` with toast badge and `[ 🌐 Open Link ]` in Web Portal.
+   - Live progress readout: `"Uploading file X of N (YY%) • Total: ZZ% • Live Speed: AA.A MB/s"`.
+5. Version Increment to v5.5 & Verification:
+   - Version bump to v5.5 across all files. Recompile `AirBeam.exe` via `csc.exe`. Update desktop shortcut via `create_shortcut.ps1`.
+   - Verify with `py_compile` and headless Tkinter test.
+   - Commit and push to GitHub (`ymaged027/AirBeam` on `main`).
+   - Strict constraint: Hold off on rebuilding Inno Setup installer or Portable ZIP unless explicitly requested.
+
+### Engineering Deliverables & Solutions:
+1. **Defensive Bug Fixes**:
+   - Listbox empty placeholders now render in `#64748B`, switching to `#F8FAFC` when files are present. Guarded `remove_selected_file()`, `remove_selected_pc_file()`, and `select_all_listbox()` to safely ignore empty states.
+   - Tab-routing checks unified under `_get_active_queue_target()`.
+   - Web Portal JavaScript upload handler updated with `URLSearchParams` preserving query string routing.
+2. **Compact 4-Mode Switcher Bar**:
+   - Replaced vertical stacking of 4 option cards with `self.mobile_mode_container` dynamically toggled via 4-pill selector bar (`select_mobile_connection_mode`).
+   - Staged Files Queue and Received Files summaries are now directly visible without scrolling.
+3. **Click-to-Zoom High-Contrast QR Modal**:
+   - Implemented `show_qr_zoom_modal()` modal window with high-contrast enlarged QR and URL display.
+   - Bound `<Button-1>` with `cursor="hand2"` on Home Wi-Fi QR, Windows Hotspot dual QRs, Phone Hotspot QR, PC-to-PC QRs, and Android APK Download QR, accompanied by `"🔍 Click QR to enlarge"` captions.
+4. **Turbo Transfer Engine**:
+   - Web Portal download route upgraded with kernel `sendfile()` zero-copy acceleration and 16 MB socket buffers.
+   - Web Portal upload route upgraded with 8 MB buffered file writes and 16 MB receive buffer.
+   - `HighSpeedTransferEngine` upgraded to 8 parallel streams with adaptive stripe sizing based on transfer payload.
+5. **Compilation, Verification & Synchronization**:
+   - Verified Python syntax with `py_compile` and headless test suite.
+   - Recompiled `AirBeam.exe` via `csc.exe` and refreshed Desktop shortcuts via `create_shortcut.ps1`.
+   - Committed changes and pushed cleanly to GitHub `main`.

@@ -6,12 +6,12 @@ using System.Text;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("AirBeam")]
-[assembly: AssemblyDescription("AirBeam v5.4 - Ultra-Speed Wireless Transfer")]
+[assembly: AssemblyDescription("AirBeam v5.5 - Ultra-Speed Wireless Transfer")]
 [assembly: AssemblyCompany("AirBeam Wireless")]
 [assembly: AssemblyProduct("AirBeam")]
 [assembly: AssemblyCopyright("Copyright © 2026 AirBeam")]
-[assembly: AssemblyVersion("5.4.0.0")]
-[assembly: AssemblyFileVersion("5.4.0.0")]
+[assembly: AssemblyVersion("5.5.0.0")]
+[assembly: AssemblyFileVersion("5.5.0.0")]
 
 namespace AirBeamLauncher
 {
