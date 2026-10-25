@@ -29,14 +29,14 @@
 Traditional transfer methods (Bluetooth at ~2 MB/s, standard Wi-Fi router relay at ~15 MB/s, or slow cloud uploads) fail to leverage modern Wi-Fi 5 / Wi-Fi 6 hardware capabilities. AirBeam establishes **direct, hardware-saturating socket pipelines (50–100+ MB/s)** using WinRT mobile hotspot automation, parallel non-blocking I/O (Java NIO / Python multi-threading), and concurrent multi-port browser engines.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                               AIRBEAM ECOSYSTEM                                 │
-├────────────────────┬────────────────────┬───────────────────┬────────────────────┤
-│  ⚡ TAB 1: ANDROID │  💻 TAB 2: PC-TO-PC│  📱 TAB 3: IPHONE │  📥 TAB 4: APK HUB │
-│  6-Stream Java NIO │  Router-Bypass P2P │  Dual-Port Safari │  Embedded Download │
-│  50–95+ MB/s       │  50–100+ MB/s      │  50–95+ MB/s      │  100 Mbps LAN      │
-│  Two-Way Portal Rx │  Free Space Guard  │  Thumbnails & ZIP │ (QR Scan Only)     │
-└────────────────────┴────────────────────┴───────────────────┴────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   AIRBEAM ECOSYSTEM                                    │
+├──────────────────────────────────────┬──────────────────────────┬──────────────────────┤
+│  🌐 TAB 1: WEB PORTAL (iOS & Android)│  💻 TAB 2: PC-TO-PC      │  📥 TAB 3: APK HUB   │
+│  Zero-Install Safari & Chrome Portal │  Router-Bypass P2P       │  Embedded APK Server │
+│  Home Wi-Fi + 5 GHz Hotspot QRs      │  50–100+ MB/s UDP P2P    │  Direct Download QR  │
+│  Native Android Socket Receiver Beam │  Free Space Guard & ARP  │  One-Tap Mobile Hub  │
+└──────────────────────────────────────┴──────────────────────────┴──────────────────────┘
 ```
 
 ---
@@ -58,13 +58,14 @@ Real-world transfer benchmarks sending a **10.0 GB 4K video file** across device
 
 ## 🌟 Key Architecture & Features
 
-### 1. ⚡ Android Multi-Stream Turbo (Tab 1)
-- **Java NIO Parallel Pipelining**: Opens 6 concurrent TCP streams on port 7777, sending chunked stripes directly into memory mapped file channels.
-- **Three Connection Modes**:
-  - `📱 Tablet Hotspot`: Connects PC Wi-Fi directly to the tablet hotspot.
-  - `💻 Windows Laptop Hotspot`: PC broadcasts a 5 GHz hotspot; tablet auto-connects.
-  - `🏠 Home Wi-Fi Router`: Direct peer-to-peer transmission over existing local router.
-- **Smart Wi-Fi State Restoration**: Automatically disconnects from ad-hoc networks and restores your original home Wi-Fi profile on transfer completion or app exit.
+### 1. 🌐 Web Portal — iOS & Android Zero-Install (Tab 1)
+- **Zero App Installation Required**: Works effortlessly on Safari (iOS / iPadOS) and Chrome (Android).
+- **Three Versatile Connection Modes**:
+  - `Option 1 (Recommended — Zero Setup)`: 🏠 Connect over Home Wi-Fi router with instant QR code and link.
+  - `Option 2 (Router-Bypass 50–95+ MB/s)`: 📡 Windows 5 GHz Mobile Hotspot with dual QR codes (Step 1 Wi-Fi + Step 2 Web Portal), dual ports (8080/8090), and one-click firewall repair.
+  - `Option 3 (Phone Hotspot ➔ PC)`: 📶 Connects Windows PC directly to phone or tablet personal hotspot.
+- **Native Android Receiver App Multi-Stream Engine**: Integrated controls for Android devices running the AirBeam Receiver APK (Tablet Hotspot / Laptop Hotspot / Home Wi-Fi selector buttons, target IP input, ping/detect, and multi-stream socket transfer engine with progress bar, pause, cancel, and speed reporting).
+- **Two-Way Transfer**: Download staged files as individual items or single uncompressed ZIP stream; upload photos, 4K videos, and documents straight back to PC (`Received_From_iPhone` / `Received_From_Android`).
 
 ### 2. 💻 PC-to-PC Direct Beaming (Tab 2)
 - **Native Windows Receiver (`PCReceiverServer`)**: Background daemon listening on TCP port 7777 with `SO_REUSEADDR`, `TCP_NODELAY`, and 8 MB socket receive buffers.
@@ -75,11 +76,9 @@ Real-world transfer benchmarks sending a **10.0 GB 4K video file** across device
 - **High-Contrast Input Box**: Deep navy background with vibrant cyan monospace text for crystal-clear readability.
 - **Labeled QR Badges**: Dedicated badges for `📶 Connect Wi-Fi` (auto-join) and `🌐 Open Web Portal` (browser transfer).
 
-### 3. 📱 iPhone & iPad Zero-Install Web Portal (Tab 3)
-- **No App Store Installation Required**: Runs entirely through native Safari on iOS.
-- **Dual-Port Safari Bypass Engine**: Sockets bind concurrently to **Port 8080** and **Port 8090**, evading Safari's predictive top-hit cache and HSTS HTTPS-upgrade heuristics.
-- **Direct Document Path Routing**: URLs explicitly route to `/index.html`, eliminating search engine HTTPS redirection.
-- **Real-Time Speedometer & Progress**: Live telemetry tracking chunked multipart streaming uploads and downloads.
+### 3. 📥 Android APK Hub (Tab 3)
+- **Embedded APK Server**: Serves `AirBeam-Receiver.apk` on port 8888 for 1-scan installation on Android devices.
+- **Live Update Highlights**: Displays built-in changelog and feature instructions directly on screen.
 
 ### 4. 🛑 Automated Mobile Hotspot Lifecycle
 - WinRT tethering manager automatically disables Windows Mobile Hotspot upon application closure (via `[X]`, `Alt+F4`, or system exit).
@@ -146,19 +145,15 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 1. Download [**AirBeam-v5.3-Setup.exe**](setup-output/AirBeam-v5.3-Setup.exe?raw=true) and run the installer (or extract [**AirBeam-v5.3-Portable.zip**](setup-output/AirBeam-v5.3-Portable.zip?raw=true)).
 2. Launch AirBeam from the Desktop shortcut or Start Menu.
 3. Select your desired tab:
-   - **Beam to Android**: Select files and click **`⚡ Beam Files`**.
-   - **PC to PC**: Select a discovered PC (or enter IP) and click **`⚡ Beam Files to PC`**.
-   - **iPhone / iOS**: Connect iPhone to Wi-Fi or Hotspot and scan the on-screen QR code.
+   - **🌐 Web Portal (iOS & Android)**: Connect any iPhone, iPad, or Android phone/tablet over Home Wi-Fi (Option 1) or Windows 5 GHz Hotspot (Option 2), scan the QR code with your camera, and beam files instantly. Also includes native socket controls for Android tablets with the AirBeam Receiver APK installed.
+   - **💻 PC to PC**: Select a discovered PC (or enter IP) and click **`⚡ Beam Files to PC`**.
+   - **📥 Install Android APK**: Scan QR code to download the standalone APK.
 
-### Android Device
-1. Install [**AirBeam-v5.0-Receiver.apk**](release/AirBeam-v5.0-Receiver.apk?raw=true) (or open Tab 4 in the desktop app and scan the QR code).
-2. Open AirBeam Receiver on your Android tablet or phone.
-3. Keep the app open—transfers will stream directly to your Downloads folder at hardware speed.
-
-### iPhone / iPad
-1. Ensure your iPhone is connected to the same Wi-Fi network or the PC's 5 GHz Hotspot.
-2. Open the camera app and scan the **Web Portal QR Code** in Tab 3 (or navigate to `http://<PC_IP>:8080/index.html` in Safari).
-3. Drag and drop files to beam to your PC, or tap to download files sent from your PC.
+### Mobile Devices (iPhone, iPad & Android)
+1. Ensure your device is connected to the same Wi-Fi network or the PC's 5 GHz Hotspot.
+2. Open the camera or browser and scan the **Web Portal QR Code** in Tab 1 (or navigate to `http://<PC_IP>:8080/index.html`).
+3. Select files, photos, or videos to beam to your PC, or tap to download files sent from your PC.
+4. *Optional (Android)*: Install [**AirBeam-Receiver.apk**](release/AirBeam-Receiver.apk?raw=true) from Tab 3 for raw multi-stream socket streaming (50–95+ MB/s).
 
 ---
 

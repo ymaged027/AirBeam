@@ -1359,3 +1359,37 @@ User requested: *"it works fine now make me a setup for the app so i can share i
    - Recompiled Inno Setup production installer (`setup-output\AirBeam-v5.3-Setup.exe`).
    - Re-packaged portable standalone archive (`setup-output\AirBeam-v5.3-Portable.zip`).
    - Synced documentation and committed cleanly to GitHub.
+
+---
+
+### Phase 40: Unified Web Portal (iOS & Android) Tab Architecture & Mobile Consolidation
+
+1. **Unified Primary Notebook Tab (`🌐 Web Portal (iOS & Android)`)**:
+   - Replaced separate "Beam to Android" (Tab 0) and "iPhone / iOS" (Tab 2) notebook tabs with ONE consolidated, primary tab: `🌐 Web Portal (iOS & Android)`.
+   - Reorganized notebook tabs into 3 clean, focused sections:
+     - Tab 0: `  🌐 Web Portal (iOS & Android)  `
+     - Tab 1: `  💻 PC to PC (50-100+ MB/s)  `
+     - Tab 2: `  📥 Install Android APK  `
+   - Dropping files onto Tab 0 routes seamlessly to the unified mobile file queue (`self.selected_files`), while Tab 1 routes to PC-to-PC.
+
+2. **Full Feature Consolidation & Zero Functionality Lost**:
+   - **Wi-Fi Telemetry & Band Inspection**: Live detection of 2.4/5GHz frequency, link speed (Mbps), signal strength, and channel.
+   - **Option 1 (Recommended — Zero Setup)**: Instant QR code and direct link (`http://<PC_IP>:8080/index.html`) for transferring files over home Wi-Fi to both iPhones and Android devices with zero app install.
+   - **Option 2 (Windows 5 GHz Mobile Hotspot)**: Direct router-bypass high-speed transfers (50–95+ MB/s) with dual QR codes (Step 1 Wi-Fi Auto-Join + Step 2 Web Portal), port switching (8080/8090), and firewall troubleshooting.
+   - **Option 3 (Phone / Tablet Personal Hotspot)**: Connects Windows PC directly to phone/tablet personal hotspot (iOS or Android) with SSID and password credentials and interactive toggle switch.
+   - **Unified File Staging Queue**: Single unified listbox (`self.listbox_files`, aliased to `self.listbox_ios_files`) with drag-and-drop support, categorical file emojis, preview on double-click, and total size counter.
+   - **Received Files & Live Telemetry**: Dual folder access for `Received_From_iPhone` and `Received_From_Android`, unified summary counts, live Web Portal speedometer, and one-click clear button (`clear_all_received_folders`).
+   - **Native Android Receiver App Support**: Preserved all socket controls for Android tablets/phones running the AirBeam Receiver APK (Tablet Hotspot / Laptop Hotspot / Home Wi-Fi selector buttons, target IP input, ping/detect, and multi-stream socket transfer engine with progress bar, speed display, pause, cancel, and speed report).
+
+3. **Internal Aliasing & Defense Against Regressions**:
+   - Guarded listbox refresh (`refresh_file_list`) with identity checks (`self.listbox_ios_files is not self.listbox_files`) to prevent duplicate entry staging.
+   - Provided backward-compatible aliases for `build_send_tab` and `build_ios_tab` forwarding to `build_web_portal_tab`.
+   - Updated `on_global_paste` and `remove_selected_file` to support the unified 3-tab layout.
+   - Fixed widget scoping bug in `build_apk_tab` for feature instructions.
+
+4. **Production Rebuild & Verification**:
+   - Verified Python bytecode syntax compilation (`py_compile`) with zero errors.
+   - Tested headless UI initialization and staging in Python with 100% assertions passing.
+   - Rebuilt standalone PyInstaller distribution (`dist\AirBeam\AirBeam.exe`).
+   - Compiled Inno Setup installer (`setup-output\AirBeam-v5.3-Setup.exe`).
+   - Packaged standalone portable archive (`setup-output\AirBeam-v5.3-Portable.zip`).
