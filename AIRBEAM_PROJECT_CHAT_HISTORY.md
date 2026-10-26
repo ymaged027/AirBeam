@@ -1525,3 +1525,30 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
    - Removed obsolete setup archives from `setup-output/`.
    - Updated `README.md` download table and repository tree.
 
+---
+
+## 44. GitHub Releases Infrastructure & Direct Download Links Fix
+
+### User Request:
+*"the download links does not work on the repo"*
+
+### Root Cause Analysis:
+1. **GitHub Turbo / SPA Navigation Interception**: In `README.md`, relative download links were configured with query strings (e.g. `(setup-output/AirBeam-v5.6-Setup.exe?raw=true)`). In GitHub's web interface, clicking any relative link triggers GitHub's single-page application router (Turbo/Hotwire) to request the URL asynchronously expecting an HTML document. When the server redirects to a raw octet stream, Turbo aborts and renders a red error banner: *"You can't perform that action at this time"*, preventing downloads.
+2. **Private Repository Raw Domain Isolation**: `raw.githubusercontent.com` does not accept GitHub web browser session cookies. Without an explicit Personal Access Token authorization header, raw content links for private repositories return `HTTP 404 Not Found`.
+
+### Engineering Deliverables & Solutions:
+1. **Official GitHub Release Publication (`v5.6`)**:
+   - Pushed Git annotated tag `v5.6` to `origin`.
+   - Created official release `v5.6` (*AirBeam v5.6 — High-Speed Wireless Transfer (x64 & ARM64)*) on repository `ymaged027/AirBeam` (Release ID `424586246`).
+   - Uploaded all 6 release binary assets directly to GitHub Releases storage:
+     - `AirBeam-v5.6-Setup.exe` (32.6 MB)
+     - `AirBeam-v5.6-Portable.zip` (57.1 MB)
+     - `AirBeam-v5.6-Windows-ARM64-Setup.exe` (19.6 MB)
+     - `AirBeam-v5.6-Windows-ARM64-Portable.zip` (28.5 MB)
+     - `AirBeam-v5.0-Receiver.apk` (4.7 MB)
+     - `AirBeam.exe` (104 KB)
+2. **README.md Download Table Modernization**:
+   - Updated badges, download tables, and Quick Start guides to link to `https://github.com/ymaged027/AirBeam/releases/download/v5.6/<Asset>` for instant, single-click downloads in any web browser without Turbo interception or 404 errors.
+   - Provided clean in-repo fallback links (`setup-output/AirBeam-v5.6-Setup.exe` without broken `?raw=true`) for direct repository file viewing.
+
+

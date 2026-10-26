@@ -1,10 +1,10 @@
 # ⚡ AirBeam v5.6: Ultra-Speed Wireless Transfer
 ### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC (x64 & ARM64), Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v5.6-0284c7?style=for-the-badge&logo=windows&logoColor=white)](AirBeam.exe)
+[![Release](https://img.shields.io/badge/Release-v5.6-0284c7?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/ymaged027/AirBeam/releases/tag/v5.6)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14%20%7C%203.12%20ARM64-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](release/AirBeam-v5.0-Receiver.apk?raw=true)
+[![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk)
 [![iOS](https://img.shields.io/badge/iOS%20Safari-Zero%20Install-000000?style=for-the-badge&logo=apple&logoColor=white)](#3--iphone--ios-zero-install-web-portal)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
@@ -12,14 +12,17 @@
 
 ## 📥 Direct Downloads & Releases
 
-| Package | Format | Size | Description | Download Link |
+> [!TIP]
+> All binary packages below are published as official [**GitHub Releases (v5.6)**](https://github.com/ymaged027/AirBeam/releases/tag/v5.6) with direct 1-click download streams.
+
+| Package | Format | Size | Description | Download Options |
 | :--- | :--- | :--- | :--- | :--- |
-| **AirBeam Windows Launcher** | `.exe` (C# .NET 4.0 AnyCPU) | **104 KB** | Universal GUI launcher with full path-quoting, icon embedding, and zero-console dispatch. Runs natively on x64 & ARM64. | [⬇️ **Download AirBeam.exe**](AirBeam.exe?raw=true) |
-| **AirBeam Windows Installer (x64)** | `.exe` (Inno Setup) | **32.6 MB** | Recommended for 64-bit Intel/AMD Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Download AirBeam-v5.6-Setup.exe**](setup-output/AirBeam-v5.6-Setup.exe?raw=true) |
-| **AirBeam Portable Edition (x64)** | `.zip` (Standalone) | **57.1 MB** | Zero-install 64-bit archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Download AirBeam-v5.6-Portable.zip**](setup-output/AirBeam-v5.6-Portable.zip?raw=true) |
-| **AirBeam Windows ARM64 Installer** | `.exe` (Inno Setup Native ARM64) | **19.6 MB** | 100% Native ARM64 edition for Windows 11 on ARM (Snapdragon X Elite / Snapdragon X Plus / SQ3). Installs native ARM64 runtime with zero emulation overhead. | [⬇️ **Download AirBeam-v5.6-Windows-ARM64-Setup.exe**](setup-output/AirBeam-v5.6-Windows-ARM64-Setup.exe?raw=true) |
-| **AirBeam Portable Edition (ARM64)** | `.zip` (Standalone ARM64) | **28.5 MB** | Zero-install native ARM64 archive for Copilot+ PCs and Snapdragon devices. Direct standalone execution. | [⬇️ **Download AirBeam-v5.6-Windows-ARM64-Portable.zip**](setup-output/AirBeam-v5.6-Windows-ARM64-Portable.zip?raw=true) |
-| **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Download AirBeam-v5.0-Receiver.apk**](release/AirBeam-v5.0-Receiver.apk?raw=true) |
+| **AirBeam Windows Launcher** | `.exe` (C# .NET 4.0 AnyCPU) | **104 KB** | Universal GUI launcher with full path-quoting, icon embedding, and zero-console dispatch. Runs natively on x64 & ARM64. | [⬇️ **Direct Download (v5.6)**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam.exe) • [View in Repo](AirBeam.exe) |
+| **AirBeam Windows Installer (x64)** | `.exe` (Inno Setup) | **32.6 MB** | Recommended for 64-bit Intel/AMD Windows 10/11. Installs to user directory (no Admin UAC required), creates shortcuts and configures firewall rules. | [⬇️ **Direct Download (v5.6)**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Setup.exe) • [View in Repo](setup-output/AirBeam-v5.6-Setup.exe) |
+| **AirBeam Portable Edition (x64)** | `.zip` (Standalone) | **57.1 MB** | Zero-install 64-bit archive. Extract anywhere and launch `AirBeam.exe` directly from a USB drive or local folder. | [⬇️ **Direct Download (v5.6)**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Portable.zip) • [View in Repo](setup-output/AirBeam-v5.6-Portable.zip) |
+| **AirBeam Windows ARM64 Installer** | `.exe` (Inno Setup Native ARM64) | **19.6 MB** | 100% Native ARM64 edition for Windows 11 on ARM (Snapdragon X Elite / Snapdragon X Plus / SQ3). Installs native ARM64 runtime with zero emulation overhead. | [⬇️ **Direct Download (v5.6)**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Setup.exe) • [View in Repo](setup-output/AirBeam-v5.6-Windows-ARM64-Setup.exe) |
+| **AirBeam Portable Edition (ARM64)** | `.zip` (Standalone ARM64) | **28.5 MB** | Zero-install native ARM64 archive for Copilot+ PCs and Snapdragon devices. Direct standalone execution. | [⬇️ **Direct Download (v5.6)**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Portable.zip) • [View in Repo](setup-output/AirBeam-v5.6-Windows-ARM64-Portable.zip) |
+| **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. Compatible with Samsung Knox, tablets, and phones. | [⬇️ **Direct Download (v5.0)**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk) • [View in Repo](release/AirBeam-v5.0-Receiver.apk) |
 | **iPhone / iPad / Android Web Portal** | Browser Link | *0 MB* | No app installation needed. Open Safari or Chrome and connect over Home Wi-Fi or Windows 5 GHz Hotspot. | [📖 **View Web Portal Quick Start**](#3--iphone--ios-zero-install-web-portal) |
 
 ---
@@ -144,7 +147,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ## 🛠️ Quick Start Guide
 
 ### Windows PC
-1. Download [**AirBeam-v5.6-Setup.exe**](setup-output/AirBeam-v5.6-Setup.exe?raw=true) (or [**AirBeam-v5.6-Windows-ARM64-Setup.exe**](setup-output/AirBeam-v5.6-Windows-ARM64-Setup.exe?raw=true) for Snapdragon / Copilot+ PCs) and run the installer (or extract [**AirBeam-v5.6-Portable.zip**](setup-output/AirBeam-v5.6-Portable.zip?raw=true) / [**AirBeam-v5.6-Windows-ARM64-Portable.zip**](setup-output/AirBeam-v5.6-Windows-ARM64-Portable.zip?raw=true)).
+1. Download [**AirBeam-v5.6-Setup.exe**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Setup.exe) (or [**AirBeam-v5.6-Windows-ARM64-Setup.exe**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Setup.exe) for Snapdragon / Copilot+ PCs) and run the installer (or extract [**AirBeam-v5.6-Portable.zip**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Portable.zip) / [**AirBeam-v5.6-Windows-ARM64-Portable.zip**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Portable.zip)).
 2. Launch AirBeam from the Desktop shortcut or Start Menu.
 3. Select your desired tab:
    - **🌐 Web Portal (iOS & Android)**: Connect any iPhone, iPad, or Android phone/tablet over Home Wi-Fi (Option 1) or Windows 5 GHz Hotspot (Option 2), scan the QR code with your camera, and beam files instantly. Also includes native socket controls for Android tablets with the AirBeam Receiver APK installed.
@@ -155,7 +158,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 1. Ensure your device is connected to the same Wi-Fi network or the PC's 5 GHz Hotspot.
 2. Open the camera or browser and scan the **Web Portal QR Code** in Tab 1 (or navigate to `http://<PC_IP>:8080/index.html`).
 3. Select files, photos, or videos to beam to your PC, or tap to download files sent from your PC.
-4. *Optional (Android)*: Install [**AirBeam-Receiver.apk**](release/AirBeam-Receiver.apk?raw=true) from Tab 3 for raw multi-stream socket streaming (50–95+ MB/s).
+4. *Optional (Android)*: Install [**AirBeam-v5.0-Receiver.apk**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk) from Tab 3 for raw multi-stream socket streaming (50–95+ MB/s).
 
 ---
 
