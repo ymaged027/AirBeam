@@ -1,8 +1,8 @@
 ; Script generated for Inno Setup 6
-; AirBeam v5.6 Native Windows ARM64 Setup Installer
+; AirBeam v5.7 Native Windows ARM64 Setup Installer
 
 #define MyAppName "AirBeam"
-#define MyAppVersion "5.6"
+#define MyAppVersion "5.7"
 #define MyAppPublisher "AirBeam Wireless"
 #define MyAppExeName "AirBeam.exe"
 
@@ -17,7 +17,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=C:\Users\youssef\WirelessFileTransfer-v3.0\setup-output
-OutputBaseFilename=AirBeam-v5.6-Windows-ARM64-Setup
+OutputBaseFilename=AirBeam-v5.7-Windows-ARM64-Setup
 SetupIconFile=C:\Users\youssef\WirelessFileTransfer-v3.0\desktop-sender\assets\airbeam.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

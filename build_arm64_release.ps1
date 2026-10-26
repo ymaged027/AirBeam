@@ -8,7 +8,7 @@ $isccPath = "C:\Users\youssef\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 $cscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 Write-Host "=========================================================="
-Write-Host " Building Native Windows ARM64 Release for AirBeam v5.6"
+Write-Host " Building Native Windows ARM64 Release for AirBeam v5.7"
 Write-Host "=========================================================="
 
 if (-not (Test-Path $setupOutputDir)) {
@@ -68,6 +68,14 @@ if (Test-Path "$projectRoot\Fix-AirBeam-Firewall.bat") {
     Copy-Item "$projectRoot\Fix-AirBeam-Firewall.bat" "$distArm64\Fix-AirBeam-Firewall.bat" -Force
 }
 
+if (Test-Path "$projectRoot\Fix-AirBeam-Loopback.bat") {
+    Copy-Item "$projectRoot\Fix-AirBeam-Loopback.bat" "$distArm64\Fix-AirBeam-Loopback.bat" -Force
+}
+
+if (Test-Path "$projectRoot\InstallLoopback.exe") {
+    Copy-Item "$projectRoot\InstallLoopback.exe" "$distArm64\InstallLoopback.exe" -Force
+}
+
 # Clean any cache or log files inside distArm64
 Get-ChildItem -Path $distArm64 -Include "*.log", "last_home_wifi.txt", "airbeam_config.json", "iphone_hotspot_config.json", "__pycache__" -Recurse | Remove-Item -Recurse -Force
 
@@ -78,8 +86,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "AirBeam.exe compilation failed with exit code $LASTEXITCODE"
 }
 
-# 6. Build Portable ZIP (setup-output\AirBeam-v5.6-Windows-ARM64-Portable.zip)
-$arm64Zip = "$setupOutputDir\AirBeam-v5.6-Windows-ARM64-Portable.zip"
+# 6. Build Portable ZIP (setup-output\AirBeam-v5.7-Windows-ARM64-Portable.zip)
+$arm64Zip = "$setupOutputDir\AirBeam-v5.7-Windows-ARM64-Portable.zip"
 if (Test-Path $arm64Zip) { Remove-Item $arm64Zip -Force }
 Write-Host "Compressing $arm64Zip..."
 Compress-Archive -Path "$distArm64\*" -DestinationPath $arm64Zip -CompressionLevel Optimal

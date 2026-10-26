@@ -901,6 +901,10 @@ class HotspotToggleSwitch(tk.Canvas):
         self.bind("<Button-1>", self._on_click)
         self._draw()
 
+    @property
+    def state(self):
+        return self.is_on
+
     def _draw(self):
         self.delete("all")
         r = self.height / 2
@@ -942,7 +946,7 @@ class HotspotToggleSwitch(tk.Canvas):
             self.anim_pos = target
             self._draw()
         if trigger_callback and self.command:
-            self.command(self.is_on)
+            self.after(10, lambda: self.command(self.is_on))
 
     def _animate_to(self, target):
         step = 0.25 if target > self.anim_pos else -0.25
@@ -1675,6 +1679,203 @@ try {
         except Exception:
             pass
 
+    OFFLINE_LOOPBACK_PS_SCRIPT = r"""
+try {
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    [Windows.Foundation.IAsyncAction, Windows.Foundation, ContentType=WindowsRuntime] | Out-Null
+    [Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType=WindowsRuntime] | Out-Null
+    [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime] | Out-Null
+    [Windows.Networking.NetworkOperators.TetheringWiFiBand, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime] | Out-Null
+    [Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime] | Out-Null
+
+    # Firewall inbound rules
+    try {
+        netsh advfirewall firewall add rule name="AirBeam iOS Web Portal" dir=in action=allow protocol=TCP localport=8090 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam High-Speed Transfer" dir=in action=allow protocol=TCP localport=7777 profile=any 2>$null | Out-Null
+    } catch {}
+
+    $asTaskAction = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+        $_.Name -eq "AsTask" -and -not $_.IsGenericMethod -and $_.GetParameters().Count -eq 1
+    } | Select-Object -First 1
+
+    $asTaskOpGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { 
+        $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name.StartsWith('IAsyncOperation')
+    } | Select-Object -First 1
+
+    $opResultType = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult]
+    $asTaskOp = $asTaskOpGeneric.MakeGenericMethod($opResultType)
+
+    # 1. Locate Loopback Adapter
+    $adapter = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -like "*Loopback*" -or $_.Name -like "*Loopback*" } | Select-Object -First 1
+    if (-not $adapter) {
+        Write-Output '{"error":"No loopback adapter installed. Turn ON Offline Hotspot to install automatically."}'
+        exit
+    }
+
+    # 2. Enable Loopback adapter if disabled
+    try {
+        if ($adapter.Status -eq "Disabled") {
+            Enable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 600
+            $adapter = Get-NetAdapter -Name $adapter.Name -ErrorAction SilentlyContinue
+        }
+    } catch {}
+
+    # 3. Configure IP & Dummy Gateway
+    try {
+        $curIP = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if (-not $curIP) {
+            New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress "192.168.100.10" -PrefixLength 24 -DefaultGateway "192.168.100.1" -ErrorAction SilentlyContinue | Out-Null
+        } else {
+            $curGW = Get-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue
+            if (-not $curGW) {
+                New-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix "0.0.0.0/0" -NextHop "192.168.100.1" -ErrorAction SilentlyContinue | Out-Null
+            }
+        }
+    } catch {}
+
+    Start-Sleep -Milliseconds 800
+
+    # 4. Find ConnectionProfile for Loopback
+    $profile = $null
+    $profiles = [Windows.Networking.Connectivity.NetworkInformation]::GetConnectionProfiles()
+    foreach ($p in $profiles) {
+        if ($p.ProfileName -eq $adapter.Name -or $p.ProfileName -like "*Loopback*" -or ($p.NetworkAdapter -ne $null -and $p.NetworkAdapter.NetworkAdapterId -eq $adapter.InterfaceGuid)) {
+            $profile = $p
+            break
+        }
+    }
+    if ($profile -eq $null) {
+        foreach ($p in $profiles) {
+            if (-not $p.IsWlanConnectionProfile) {
+                $profile = $p
+                break
+            }
+        }
+    }
+
+    if ($profile -eq $null) {
+        Write-Output '{"error":"Loopback network profile not active yet. Please wait a moment and try again."}'
+        exit
+    }
+
+    $manager = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($profile)
+    $config = $manager.GetCurrentAccessPointConfiguration()
+
+    if ($preferredBand -eq $null -or $preferredBand -eq "") {
+        $preferredBand = "5GHz"
+    }
+
+    try {
+        if ($preferredBand -eq "5GHz") {
+            $band5GHz = [Windows.Networking.NetworkOperators.TetheringWiFiBand]::FiveGigahertz
+            if ($config.IsBandSupported($band5GHz)) {
+                $config.Band = $band5GHz
+                $action = $manager.ConfigureAccessPointAsync($config)
+                $t = $asTaskAction.Invoke($null, @($action))
+                $t.Wait()
+            }
+        }
+    } catch {}
+
+    if ($manager.TetheringOperationalState -ne [Windows.Networking.NetworkOperators.TetheringOperationalState]::On) {
+        $opStart = $manager.StartTetheringAsync()
+        $tStart = $asTaskOp.Invoke($null, @($opStart))
+        $tStart.Wait()
+    }
+
+    $config = $manager.GetCurrentAccessPointConfiguration()
+    $enabled = ($manager.TetheringOperationalState -eq [Windows.Networking.NetworkOperators.TetheringOperationalState]::On)
+
+    $host_ip = "192.168.137.1"
+    for ($attempt = 0; $attempt -lt 6; $attempt++) {
+        Start-Sleep -Milliseconds 500
+        $ipObj = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { 
+            ($_.IPAddress -like "192.168.137.*" -or $_.InterfaceAlias -like "*Wi-Fi Direct*" -or $_.InterfaceAlias -like "*Local Area Connection*") -and 
+            $_.IPAddress -ne "127.0.0.1" -and $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -notlike "192.168.100.*"
+        } | Select-Object -First 1
+        if ($ipObj) {
+            $host_ip = $ipObj.IPAddress
+            break
+        }
+    }
+
+    $res = @{
+        enabled = $enabled
+        ssid = $config.Ssid
+        passphrase = $config.Passphrase
+        band = $config.Band.ToString()
+        host_ip = $host_ip
+    }
+    Write-Output ($res | ConvertTo-Json -Compress)
+} catch {
+    Write-Output ('{"error": "' + $_.Exception.Message.Replace('"', '\"') + '"}')
+}
+"""
+
+    OFFLINE_LOOPBACK_STOP_PS = r"""
+try {
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    [Windows.Foundation.IAsyncAction, Windows.Foundation, ContentType=WindowsRuntime] | Out-Null
+    [Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType=WindowsRuntime] | Out-Null
+    [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime] | Out-Null
+
+    $asTaskOpGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { 
+        $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name.StartsWith('IAsyncOperation')
+    } | Select-Object -First 1
+    $opResultType = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult]
+    $asTaskOp = $asTaskOpGeneric.MakeGenericMethod($opResultType)
+
+    # 1. Stop all active tethering managers
+    $profiles = [Windows.Networking.Connectivity.NetworkInformation]::GetConnectionProfiles()
+    foreach ($p in $profiles) {
+        try {
+            $m = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($p)
+            if ($m -ne $null -and $m.TetheringOperationalState -eq [Windows.Networking.NetworkOperators.TetheringOperationalState]::On) {
+                $op = $m.StopTetheringAsync()
+                $t = $asTaskOp.Invoke($null, @($op))
+                $t.Wait()
+            }
+        } catch {}
+    }
+
+    # 2. Reverse Loopback: disable the Loopback adapter so normal network is unaffected
+    $adapter = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -like "*Loopback*" -or $_.Name -like "*Loopback*" } | Select-Object -First 1
+    if ($adapter) {
+        try {
+            Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        } catch {}
+    }
+} catch {}
+"""
+
+    @classmethod
+    def ensure_offline_loopback_hotspot_active(cls, preferred_band="5GHz"):
+        try:
+            ps_script = f'$preferredBand = "{preferred_band}"\n' + cls.OFFLINE_LOOPBACK_PS_SCRIPT
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+            output = proc.stdout.strip()
+            for line in output.splitlines():
+                line = line.strip()
+                if line.startswith("{") and line.endswith("}"):
+                    data = json.loads(line)
+                    return data
+        except Exception as e:
+            print(f"Error starting offline loopback hotspot: {e}")
+        return None
+
+    @classmethod
+    def stop_offline_loopback_hotspot(cls, async_mode=False):
+        try:
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cls.OFFLINE_LOOPBACK_STOP_PS]
+            if async_mode:
+                subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
+            else:
+                subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+        except Exception:
+            pass
+
 # --- Background APK Download Server ---
 class ApkServer(threading.Thread):
     def __init__(self, apk_path, port=APK_SERVER_PORT):
@@ -1731,7 +1932,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.6 • Web Portal</title>
+    <title>AirBeam v5.7 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -1969,7 +2170,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.6</h1>
+        <h1><span>⚡</span> AirBeam v5.7</h1>
         <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -2969,7 +3170,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.6 [{ARCH_TAG}] PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v5.7 [{ARCH_TAG}] PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -3581,7 +3782,7 @@ class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
         self.root = self
-        self.title(f"AirBeam v5.6 [{ARCH_TAG}] — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title(f"AirBeam v5.7 [{ARCH_TAG}] — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3664,7 +3865,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.6')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.7')
         except Exception:
             pass
 
@@ -4359,6 +4560,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v5.7-Receiver.apk"),
+                os.path.join(r, "AirBeam-v5.7-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.6-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.6-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.5-Receiver.apk"),
@@ -4499,43 +4702,32 @@ class AirBeamSenderApp(BaseTkApp):
                 except Exception:
                     pass
 
-            # Auto-detect when PC connects to or disconnects from iPhone Personal Hotspot
-            ssid_lower = ssid.lower() if ssid else ""
-            my_iphone_ssid = getattr(self, "iphone_hotspot_ssid", "").strip().lower()
-            is_iphone = bool(ssid and ("iphone" in ssid_lower or (my_iphone_ssid and my_iphone_ssid in ssid_lower)))
-            if is_iphone:
-                if not getattr(self, "connected_to_iphone_hotspot", False):
-                    self.connected_to_iphone_hotspot = True
-                    if hasattr(self, "ios_connect_hotspot_switch"):
-                        self.ios_connect_hotspot_switch.set_state(True, trigger_callback=False)
-                    cur_ip = get_local_ip()
-                    portal_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
-                    img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
-                    if hasattr(self, "lbl_ios_connect_hotspot_state"):
-                        self.lbl_ios_connect_hotspot_state.config(text=f"ON — Connected to '{ssid}' at {cur_ip}", fg="#10b981")
+            # Option 3 (Phone Hotspot QR) Telemetry Sync:
+            # When the user has switched the Phone Hotspot toggle ON, keep QR and status synced with current IP & SSID
+            qr_sw = getattr(self, "phone_hotspot_qr_switch", None) or getattr(self, "ios_connect_hotspot_switch", None)
+            if qr_sw and getattr(qr_sw, "state", False):
+                cur_ip = get_local_ip()
+                active_url = getattr(self, "active_opt2_portal_url", "")
+                expected_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+                if cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254.") and active_url != expected_url:
+                    self.active_opt2_portal_url = expected_url
+                    img_portal = self.generate_qr_image(expected_url, box_size=4, border=2)
+                    lbl_st = getattr(self, "lbl_phone_hotspot_qr_state", None) or getattr(self, "lbl_ios_connect_hotspot_state", None)
+                    if lbl_st:
+                        lbl_st.config(text=f"ON — Portal Active at {cur_ip} ('{ssid}')", fg="#10b981")
                     if hasattr(self, "build_opt2_connected_view"):
-                        self.build_opt2_connected_view(portal_url, cur_ip, ssid, img_portal)
-            else:
-                if getattr(self, "connected_to_iphone_hotspot", False):
-                    self.connected_to_iphone_hotspot = False
-                    if hasattr(self, "ios_connect_hotspot_switch"):
-                        self.ios_connect_hotspot_switch.set_state(False, trigger_callback=False)
-                    if hasattr(self, "lbl_ios_connect_hotspot_state"):
-                        self.lbl_ios_connect_hotspot_state.config(text=f"OFF — Connected to {ssid}", fg="#94a3b8")
-                    if hasattr(self, "build_opt2_disconnected_view"):
-                        self.build_opt2_disconnected_view()
+                        self.build_opt2_connected_view(expected_url, cur_ip, ssid, img_portal)
         else:
             self.lbl_telemetry_badge.config(text=f"📶 [{ARCH_TAG}] Wi-Fi: Disconnected or Wi-Fi adapter inactive")
             self.lbl_telemetry_tip.config(text="")
             if hasattr(self, "hotspot_switch"):
                 self.hotspot_switch.set_state(False, trigger_callback=False)
                 self.lbl_hotspot_toggle_state.config(text="OFF (Disconnected)", fg="#94a3b8")
-            if getattr(self, "connected_to_iphone_hotspot", False):
-                self.connected_to_iphone_hotspot = False
-                if hasattr(self, "ios_connect_hotspot_switch"):
-                    self.ios_connect_hotspot_switch.set_state(False, trigger_callback=False)
-                if hasattr(self, "lbl_ios_connect_hotspot_state"):
-                    self.lbl_ios_connect_hotspot_state.config(text="OFF (Wi-Fi Disconnected)", fg="#94a3b8")
+            qr_sw = getattr(self, "phone_hotspot_qr_switch", None) or getattr(self, "ios_connect_hotspot_switch", None)
+            if qr_sw and getattr(qr_sw, "state", False):
+                lbl_st = getattr(self, "lbl_phone_hotspot_qr_state", None) or getattr(self, "lbl_ios_connect_hotspot_state", None)
+                if lbl_st:
+                    lbl_st.config(text="ON — Wi-Fi Disconnected (Connect PC to Hotspot)", fg="#ef4444")
 
         self.update_ios_files_summary()
 
@@ -4709,7 +4901,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_ver_badge = tk.Label(
             brand_frame,
-            text=f"v5.6 [{ARCH_TAG}]",
+            text=f"v5.7 [{ARCH_TAG}]",
             bg="#1e293b",
             fg="#94a3b8",
             font=("Segoe UI", 8, "bold"),
@@ -4866,17 +5058,39 @@ class AirBeamSenderApp(BaseTkApp):
         opt1_top.pack(fill="x", pady=(0, 8))
         ttk.Label(opt1_top, text="Option 2: 📡 Windows 5 GHz Mobile Hotspot (PC Hotspot ➔ Phone / Tablet)", style="CardHeader.TLabel").pack(side="left")
 
-        # Toggle Switch for Option 2
+        # Dual Switch Bar: 1. Standard Windows Hotspot | 2. Offline Hotspot (Loopback Method)
         sw1_frame = tk.Frame(opt1_card, bg="#1e293b")
         sw1_frame.pack(fill="x", pady=(0, 8))
-        self.ios_win_hotspot_switch = HotspotToggleSwitch(sw1_frame, command=self.toggle_windows_hotspot_for_ios, width=54, height=26, bg="#1e293b")
-        self.ios_win_hotspot_switch.pack(side="left", padx=(0, 10))
+
+        # Switch 1: Standard Hotspot
+        sw1_std = tk.Frame(sw1_frame, bg="#1e293b")
+        sw1_std.pack(side="left", padx=(0, 14))
+
+        self.ios_win_hotspot_switch = HotspotToggleSwitch(sw1_std, command=self.toggle_windows_hotspot_for_ios, width=54, height=26, bg="#1e293b")
+        self.ios_win_hotspot_switch.pack(side="left", padx=(0, 8))
 
         self.lbl_ios_win_hotspot_state = tk.Label(
-            sw1_frame, text="OFF (Click switch to enable Windows Hotspot)",
+            sw1_std, text="Standard Hotspot: OFF",
             bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9, "bold")
         )
         self.lbl_ios_win_hotspot_state.pack(side="left")
+
+        # Divider
+        div_sw1 = tk.Frame(sw1_frame, width=1, bg="#334155")
+        div_sw1.pack(side="left", fill="y", padx=(0, 14), pady=2)
+
+        # Switch 2: Offline Hotspot (Loopback Method)
+        sw1_loop = tk.Frame(sw1_frame, bg="#1e293b")
+        sw1_loop.pack(side="left", fill="x", expand=True)
+
+        self.offline_hotspot_loopback_switch = HotspotToggleSwitch(sw1_loop, command=self.toggle_offline_hotspot_loopback, width=54, height=26, bg="#1e293b")
+        self.offline_hotspot_loopback_switch.pack(side="left", padx=(0, 8))
+
+        self.lbl_offline_hotspot_state = tk.Label(
+            sw1_loop, text="Offline Hotspot (Loopback): OFF",
+            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9, "bold")
+        )
+        self.lbl_offline_hotspot_state.pack(side="left")
 
         # Side-by-Side QR Codes Frame
         self.qr_dual_frame = tk.Frame(opt1_card, bg="#1e293b")
@@ -4968,52 +5182,60 @@ class AirBeamSenderApp(BaseTkApp):
         self.opt2_card = ttk.Frame(self.mobile_mode_container, style="Card.TFrame", padding=14)
         opt2_card = self.opt2_card
 
-        ttk.Label(opt2_card, text="Option 3: 📶 Connect PC to Phone / Tablet Personal Hotspot (Phone Hotspot ➔ PC)", style="CardHeader.TLabel").pack(anchor="w")
-        ttk.Label(opt2_card, text="Turn ON Personal Hotspot in your iPhone or Android Settings (5 GHz). Toggle switch below or connect directly via Windows Wi-Fi flyout.", style="CardBody.TLabel").pack(anchor="w", pady=(2, 8))
+        ttk.Label(opt2_card, text="Option 3: 📱 Connect PC to Phone / Tablet Personal Hotspot (Phone Hotspot ➔ PC)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(opt2_card, text="Turn ON Personal Hotspot on your phone/tablet, connect your PC to it via Windows Wi-Fi, then flip the toggle switch to reveal your Web Portal QR code.", style="CardBody.TLabel").pack(anchor="w", pady=(2, 8))
 
-        fields_frame = tk.Frame(opt2_card, bg="#1e293b")
-        fields_frame.pack(fill="x", pady=(0, 10))
+        # Controls Bar: Switch + Status Label + Quick Action Buttons (Open Wi-Fi, Refresh IP/QR, Port Switcher)
+        opt2_ctrl_frame = tk.Frame(opt2_card, bg="#1e293b")
+        opt2_ctrl_frame.pack(fill="x", pady=(2, 8))
 
-        tk.Label(fields_frame, text="Hotspot SSID:", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 6))
-        self.entry_iphone_ssid = tk.Entry(
-            fields_frame, width=18,
-            bg="#0f172a", fg="#ffffff",
-            insertbackground="#38bdf8",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat", bd=0,
-            highlightthickness=1, highlightbackground="#475569", highlightcolor="#38bdf8"
+        self.phone_hotspot_qr_switch = HotspotToggleSwitch(
+            opt2_ctrl_frame, command=self.on_phone_hotspot_qr_toggle_changed, width=54, height=26, bg="#1e293b"
         )
-        self.entry_iphone_ssid.grid(row=0, column=1, sticky="w", padx=(0, 16), ipady=3)
-        self.entry_iphone_ssid.insert(0, self.iphone_hotspot_ssid)
+        self.phone_hotspot_qr_switch.pack(side="left", padx=(0, 10))
 
-        tk.Label(fields_frame, text="Hotspot Password:", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="w", padx=(0, 6))
-        self.entry_iphone_pwd = tk.Entry(
-            fields_frame, width=18, show="*",
-            bg="#0f172a", fg="#ffffff",
-            insertbackground="#38bdf8",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat", bd=0,
-            highlightthickness=1, highlightbackground="#475569", highlightcolor="#38bdf8"
-        )
-        self.entry_iphone_pwd.grid(row=0, column=3, sticky="w", padx=(0, 6), ipady=3)
-        self.entry_iphone_pwd.insert(0, self.iphone_hotspot_password)
-
-        self.btn_toggle_pwd_view = tk.Button(
-            fields_frame, text="👁", bg="#334155", fg="#f8fafc", font=("Segoe UI", 9, "bold"),
-            relief="flat", bd=0, padx=6, pady=2, cursor="hand2", command=self.toggle_pwd_visibility
-        )
-        self.btn_toggle_pwd_view.grid(row=0, column=4, sticky="w", padx=(0, 10))
-
-        sw2_frame = tk.Frame(opt2_card, bg="#1e293b")
-        sw2_frame.pack(fill="x", pady=(2, 8))
-        self.ios_connect_hotspot_switch = HotspotToggleSwitch(sw2_frame, command=self.toggle_connect_to_iphone_hotspot, width=54, height=26, bg="#1e293b")
-        self.ios_connect_hotspot_switch.pack(side="left", padx=(0, 10))
-
-        self.lbl_ios_connect_hotspot_state = tk.Label(
-            sw2_frame, text="OFF (Click switch or connect via Windows Wi-Fi flyout)",
+        self.lbl_phone_hotspot_qr_state = tk.Label(
+            opt2_ctrl_frame, text="OFF (Connect PC to Phone Hotspot, then flip ON to show Web Portal QR)",
             bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9, "bold")
         )
-        self.lbl_ios_connect_hotspot_state.pack(side="left")
+        self.lbl_phone_hotspot_qr_state.pack(side="left", padx=(0, 10))
+
+        # Backward compatibility aliases
+        self.ios_connect_hotspot_switch = self.phone_hotspot_qr_switch
+        self.lbl_ios_connect_hotspot_state = self.lbl_phone_hotspot_qr_state
+        self.entry_iphone_ssid = tk.Entry()
+        self.entry_iphone_pwd = tk.Entry()
+        self.btn_toggle_pwd_view = tk.Button()
+
+        opt2_btn_box = tk.Frame(opt2_ctrl_frame, bg="#1e293b")
+        opt2_btn_box.pack(side="right")
+
+        self.btn_open_wifi_flyout = tk.Button(
+            opt2_btn_box, text="📶 Open Wi-Fi Menu", bg="#334155", fg="#f8fafc",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#475569",
+            command=self.open_windows_wifi_flyout
+        )
+        self.btn_open_wifi_flyout.pack(side="left", padx=(0, 6))
+        bind_button_hover(self.btn_open_wifi_flyout, normal_bg="#334155", hover_bg="#475569", normal_fg="#f8fafc", hover_fg="#ffffff")
+
+        self.btn_refresh_phone_hotspot = tk.Button(
+            opt2_btn_box, text="🔄 Refresh IP / QR", bg="#0284c7", fg="#ffffff",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#38bdf8",
+            command=self.refresh_phone_hotspot_qr
+        )
+        self.btn_refresh_phone_hotspot.pack(side="left", padx=(0, 6))
+        bind_button_hover(self.btn_refresh_phone_hotspot, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
+
+        self.btn_opt2_switch_port = tk.Button(
+            opt2_btn_box, text=f"🔀 Port: {self.iphone_portal_port}", bg="#1e293b", fg="#a855f7",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#6b21a8",
+            command=self.toggle_portal_port
+        )
+        self.btn_opt2_switch_port.pack(side="left")
+        bind_button_hover(self.btn_opt2_switch_port, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#a855f7", hover_fg="#c084fc")
 
         # Option 3 Next-Steps Guidance & QR Container
         self.opt2_action_frame = tk.Frame(opt2_card, bg="#0f172a", padx=12, pady=10, highlightthickness=1, highlightbackground="#334155")
@@ -6472,7 +6694,218 @@ class AirBeamSenderApp(BaseTkApp):
                 WindowsHotspotController.stop_hotspot()
                 self.win_hotspot_for_iphone_active = False
                 def update_stop():
-                    self.lbl_ios_win_hotspot_state.config(text="OFF (Click switch to enable Windows Hotspot)", fg="#94a3b8")
+                    self.lbl_ios_win_hotspot_state.config(text="Standard Hotspot: OFF", fg="#94a3b8")
+                    if hasattr(self, "offline_hotspot_loopback_switch"):
+                        self.offline_hotspot_loopback_switch.set_state(False, trigger_callback=False)
+                    if hasattr(self, "lbl_offline_hotspot_state"):
+                        self.lbl_offline_hotspot_state.config(text="Offline Hotspot (Loopback): OFF", fg="#94a3b8")
+                    self.lbl_ios_win_hotspot_creds.config(text="Turn ON switch above to generate Wi-Fi & Portal QR codes.", fg="#94a3b8")
+                    self.reset_ios_qr_placeholders()
+                self.after(0, update_stop)
+            threading.Thread(target=stop_worker, daemon=True).start()
+
+    def check_loopback_setup_needed(self):
+        """Checks whether the Microsoft KM-TEST Loopback Adapter is already installed on Windows.
+        Returns True if setup IS needed (adapter not installed), False if already installed."""
+        try:
+            import winreg
+            net_key_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, net_key_path) as net_key:
+                subkeys_count, _, _ = winreg.QueryInfoKey(net_key)
+                for i in range(subkeys_count):
+                    try:
+                        subkey_name = winreg.EnumKey(net_key, i)
+                        with winreg.OpenKey(net_key, subkey_name) as dev_key:
+                            try:
+                                desc, _ = winreg.QueryValueEx(dev_key, "DriverDesc")
+                                cid, _ = winreg.QueryValueEx(dev_key, "ComponentId")
+                                if "loopback" in str(desc).lower() or str(cid).lower() == "*msloop":
+                                    return False
+                            except FileNotFoundError:
+                                pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Fallback check via PowerShell
+        try:
+            cmd = ["powershell", "-NoProfile", "-Command",
+                   "Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -like '*Loopback*' -or $_.Name -like '*Loopback*' } | Select-Object -ExpandProperty Name -First 1"]
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip()
+            if out:
+                return False
+        except Exception:
+            pass
+        return True
+
+    def install_loopback_adapter_silent(self):
+        """Silently installs the Microsoft KM-TEST Loopback Adapter using InstallLoopback.exe.
+        Requests elevation via Windows UAC so the driver installation succeeds without any wizard dialog."""
+        exe_candidates = [
+            os.path.join(APP_ROOT, "InstallLoopback.exe"),
+            os.path.join(APP_ROOT, "desktop-sender", "InstallLoopback.exe"),
+            os.path.join(APP_ROOT, "desktop-sender", "assets", "InstallLoopback.exe"),
+            os.path.join(BUNDLE_DIR, "InstallLoopback.exe"),
+            os.path.join(BUNDLE_DIR, "assets", "InstallLoopback.exe"),
+        ]
+        exe = next((e for e in exe_candidates if os.path.exists(e)), None)
+        if not exe:
+            return False
+
+        # Attempt 1: Elevated execution via ShellExecuteExW (cleanest, handles UAC and waits for completion)
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class SHELLEXECUTEINFOW(ctypes.Structure):
+                _fields_ = [
+                    ('cbSize',       wintypes.DWORD),
+                    ('fMask',        wintypes.ULONG),
+                    ('hwnd',         wintypes.HWND),
+                    ('lpVerb',       wintypes.LPCWSTR),
+                    ('lpFile',       wintypes.LPCWSTR),
+                    ('lpParameters', wintypes.LPCWSTR),
+                    ('lpDirectory',  wintypes.LPCWSTR),
+                    ('nShow',        ctypes.c_int),
+                    ('hInstApp',     wintypes.HINSTANCE),
+                    ('lpIDList',     wintypes.LPVOID),
+                    ('lpClass',      wintypes.LPCWSTR),
+                    ('hkeyClass',    wintypes.HKEY),
+                    ('dwHotKey',     wintypes.DWORD),
+                    ('hIconOrMonitor', wintypes.HANDLE),
+                    ('hProcess',     wintypes.HANDLE)
+                ]
+
+            SEE_MASK_NOCLOSEPROCESS = 0x00000040
+            SW_SHOWNORMAL = 1
+
+            sei = SHELLEXECUTEINFOW()
+            sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS
+            sei.hwnd = None
+            sei.lpVerb = "runas"
+            sei.lpFile = exe
+            sei.lpParameters = ""
+            sei.lpDirectory = os.path.dirname(exe)
+            sei.nShow = SW_SHOWNORMAL
+
+            if ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
+                hProcess = sei.hProcess
+                if hProcess:
+                    try:
+                        ctypes.windll.kernel32.WaitForSingleObject(hProcess, 20000)
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(hProcess)
+                # Poll registry for up to 10 seconds to confirm adapter is ready
+                for _ in range(20):
+                    time.sleep(0.5)
+                    if not self.check_loopback_setup_needed():
+                        return True
+        except Exception as e:
+            print("ShellExecuteExW notice:", e)
+
+        # Attempt 2: Elevated execution via PowerShell Start-Process -Verb RunAs -Wait
+        try:
+            cmd = [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                f"Start-Process -FilePath '{exe}' -Verb RunAs -Wait"
+            ]
+            subprocess.run(cmd, capture_output=True, timeout=25)
+            for _ in range(10):
+                time.sleep(0.5)
+                if not self.check_loopback_setup_needed():
+                    return True
+        except Exception as e:
+            print("PowerShell Start-Process notice:", e)
+
+        return not self.check_loopback_setup_needed()
+
+    def toggle_offline_hotspot_loopback(self, target_state):
+        if target_state:
+            self.lbl_offline_hotspot_state.config(text="Checking Loopback status...", fg="#f59e0b")
+
+            def loopback_worker():
+                # 1. Check if setup is needed before doing anything
+                needed = self.check_loopback_setup_needed()
+                if needed:
+                    def notify_install():
+                        self.lbl_offline_hotspot_state.config(
+                            text="Setting up Loopback (please accept UAC prompt)...", fg="#38bdf8"
+                        )
+                    self.after(0, notify_install)
+                    installed = self.install_loopback_adapter_silent()
+                    if not installed and self.check_loopback_setup_needed():
+                        def on_installer_failed():
+                            self.offline_hotspot_loopback_switch.set_state(False, trigger_callback=False)
+                            self.lbl_offline_hotspot_state.config(
+                                text="Offline Hotspot: Setup Required", fg="#ef4444"
+                            )
+                            messagebox.showerror(
+                                "Offline Hotspot Setup",
+                                "The Loopback Adapter installation requires Administrator permissions.\n\n"
+                                "Please turn the switch ON again and click 'Yes' when Windows prompts for permission."
+                            )
+                        self.after(0, on_installer_failed)
+                        return
+
+                # 2. Setup is done or was already installed: Start offline hotspot
+                def notify_starting():
+                    self.lbl_offline_hotspot_state.config(text="Starting Offline Hotspot...", fg="#f59e0b")
+                self.after(0, notify_starting)
+
+                res = WindowsHotspotController.ensure_offline_loopback_hotspot_active("5GHz")
+                if res and res.get("enabled"):
+                    self.win_hotspot_for_iphone_active = True
+                    self.offline_hotspot_active = True
+                    ssid = res.get("ssid", "WindowsHotspot").strip()
+                    pwd = res.get("passphrase", "").strip()
+                    host_ip = res.get("host_ip", "192.168.137.1").strip()
+
+                    wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
+                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+                    self.active_win_hotspot_wifi_str = wifi_qr
+                    self.active_win_hotspot_portal_url = portal_url
+
+                    img_wifi = self.generate_qr_image(wifi_qr, box_size=4, border=2)
+                    img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
+
+                    def update_ui():
+                        self.offline_hotspot_loopback_switch.set_state(True, trigger_callback=False)
+                        self.ios_win_hotspot_switch.set_state(True, trigger_callback=False)
+                        self.lbl_offline_hotspot_state.config(text="Offline Hotspot (Loopback): ON", fg="#10b981")
+                        self.lbl_ios_win_hotspot_state.config(text=f"ON — Loopback at {host_ip}", fg="#10b981")
+                        self.lbl_ios_win_hotspot_creds.config(
+                            text=f"SSID: {ssid}  •  Password: {pwd}  •  Direct URL: {portal_url}",
+                            fg="#38bdf8"
+                        )
+                        if img_wifi:
+                            self.qr_ios_wifi_label.config(image=img_wifi)
+                            self.qr_ios_wifi_label.image = img_wifi
+                        if img_portal:
+                            self.qr_ios_portal_label.config(image=img_portal)
+                            self.qr_ios_portal_label.image = img_portal
+                    self.after(0, update_ui)
+                else:
+                    err_msg = res.get("error", "Failed to start offline hotspot") if isinstance(res, dict) else "Could not start offline hotspot"
+                    def on_fail():
+                        self.offline_hotspot_loopback_switch.set_state(False, trigger_callback=False)
+                        self.lbl_offline_hotspot_state.config(text="Offline Hotspot: Failed", fg="#ef4444")
+                        messagebox.showerror("Offline Hotspot Error", f"Could not start offline hotspot:\n{err_msg}")
+                    self.after(0, on_fail)
+
+            threading.Thread(target=loopback_worker, daemon=True).start()
+        else:
+            self.lbl_offline_hotspot_state.config(text="Reversing Loopback & stopping hotspot...", fg="#f59e0b")
+            def stop_worker():
+                WindowsHotspotController.stop_offline_loopback_hotspot()
+                self.win_hotspot_for_iphone_active = False
+                self.offline_hotspot_active = False
+                def update_stop():
+                    self.offline_hotspot_loopback_switch.set_state(False, trigger_callback=False)
+                    self.ios_win_hotspot_switch.set_state(False, trigger_callback=False)
+                    self.lbl_offline_hotspot_state.config(text="Offline Hotspot (Loopback): OFF", fg="#94a3b8")
+                    self.lbl_ios_win_hotspot_state.config(text="Standard Hotspot: OFF", fg="#94a3b8")
                     self.lbl_ios_win_hotspot_creds.config(text="Turn ON switch above to generate Wi-Fi & Portal QR codes.", fg="#94a3b8")
                     self.reset_ios_qr_placeholders()
                 self.after(0, update_stop)
@@ -6500,12 +6933,16 @@ class AirBeamSenderApp(BaseTkApp):
             self.btn_switch_port.config(text=f"🔀 Port: {self.iphone_portal_port}")
         if hasattr(self, "btn_opt3_switch_port"):
             self.btn_opt3_switch_port.config(text=f"🔀 Port: {self.iphone_portal_port}")
+        if hasattr(self, "btn_opt2_switch_port"):
+            self.btn_opt2_switch_port.config(text=f"🔀 Port: {self.iphone_portal_port}")
         if hasattr(self, "lbl_ios_live_speed"):
             self.lbl_ios_live_speed.config(text=f"⚡ Web Portal Status: Active on Ports 8080 & 8090 | Current: {self.iphone_portal_port}")
         if hasattr(self, "opt3_action_frame"):
             self.refresh_opt3_home_portal()
         if getattr(self, "win_hotspot_for_iphone_active", False):
             self.refresh_win_hotspot_qr()
+        elif getattr(self, "phone_hotspot_qr_switch", None) and self.phone_hotspot_qr_switch.state:
+            self.refresh_phone_hotspot_qr()
         elif getattr(self, "connected_to_iphone_hotspot", False):
             self.refresh_ios_qr_codes()
 
@@ -6557,14 +6994,14 @@ class AirBeamSenderApp(BaseTkApp):
         h_frame.pack(fill="x", pady=(0, 6))
 
         tk.Label(
-            h_frame, text="📱 How Option 3 Works (iPhone Personal Hotspot ➔ PC):",
+            h_frame, text="📱 How Option 3 Works (Phone / Tablet Personal Hotspot ➔ PC):",
             bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 9, "bold")
         ).pack(side="left")
 
         steps = [
-            "1️⃣  On your iPhone: Open Settings ➔ Personal Hotspot ➔ Turn ON 'Allow Others to Join'.",
-            "2️⃣  Enter your iPhone Hotspot SSID & Password above, then flip the toggle switch to ON (or connect via Windows Wi-Fi flyout).",
-            "3️⃣  Windows connects directly to your iPhone. Once connected, your AirBeam Portal QR code and direct link appear right here to start ultra-fast transfers!"
+            "1️⃣  On your Phone / Tablet: Turn ON Personal Hotspot in Settings (iPhone: 'Allow Others to Join' | Android: 'Portable Hotspot').",
+            "2️⃣  On your PC: Connect Windows Wi-Fi to your phone's hotspot (click [ 📶 Open Wi-Fi Menu ] above).",
+            "3️⃣  Flip Switch ON: Turn the toggle switch ON above. Your AirBeam Web Portal QR code and direct link appear right here to start ultra-fast transfers!"
         ]
         step_labels = []
         for s in steps:
@@ -6590,7 +7027,7 @@ class AirBeamSenderApp(BaseTkApp):
         h_frame.pack(fill="x", pady=(0, 6))
 
         tk.Label(
-            h_frame, text=f"⚠️ Could Not Connect to '{target_ssid}' — Connection Restored to '{restored_net}'",
+            h_frame, text=f"⚠️ Wi-Fi Network Notice: Currently on '{restored_net}'",
             bg="#0f172a", fg="#f59e0b", font=("Segoe UI", 9, "bold")
         ).pack(side="left")
 
@@ -6598,10 +7035,9 @@ class AirBeamSenderApp(BaseTkApp):
         box.pack(fill="x", pady=(0, 4))
 
         steps = [
-            ("1️⃣ Keep iPhone Screen Active:", "Open Settings ➔ Personal Hotspot on iPhone and STAY on that screen. (iOS only accepts connections while this screen is open!)."),
-            ("2️⃣ Toggle Personal Hotspot:", "Toggle 'Allow Others to Join' OFF and back ON on your iPhone, then click the switch here again."),
-            ("3️⃣ Easiest Way (Windows Taskbar):", f"Click the Wi-Fi icon in your Windows taskbar, click '{target_ssid}', and connect. AirBeam will auto-detect it immediately!"),
-            ("💡 Instant Alternative:", f"Use Option 1 at the top of this tab! Both PC and iPhone work instantly over '{restored_net}' with ZERO hotspot setup.")
+            ("1️⃣ Connect to Phone Hotspot:", "Click [ 📶 Open Wi-Fi Menu ] above and select your phone's Wi-Fi hotspot in Windows."),
+            ("2️⃣ Flip Switch ON:", "Once Windows is connected, turn the switch ON to display your QR code."),
+            ("💡 Instant Alternative:", f"Use Option 1 at the top of this tab to transfer over '{restored_net}' with ZERO hotspot setup.")
         ]
         failed_labels = []
         for title, desc in steps:
@@ -6633,7 +7069,7 @@ class AirBeamSenderApp(BaseTkApp):
         qr_box = tk.Frame(top_row, bg="#1e293b", padx=10, pady=8, highlightthickness=1, highlightbackground="#38bdf8")
         qr_box.pack(side="left", padx=(0, 12))
 
-        tk.Label(qr_box, text="📲 Scan with iPhone Camera", bg="#1e293b", fg="#10b981", font=("Segoe UI", 9, "bold")).pack(pady=(0, 2))
+        tk.Label(qr_box, text="📲 Scan with Phone Camera", bg="#1e293b", fg="#10b981", font=("Segoe UI", 9, "bold")).pack(pady=(0, 2))
         self.qr_opt2_label = tk.Label(qr_box, bg="#1e293b", cursor="hand2")
         self.qr_opt2_label.pack(pady=2)
         if img_portal:
@@ -6643,7 +7079,7 @@ class AirBeamSenderApp(BaseTkApp):
         lbl_zoom2 = tk.Label(qr_box, text="🔍 Click QR to enlarge", bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 8, "bold"), cursor="hand2")
         lbl_zoom2.pack(pady=(0, 2))
         lbl_zoom2.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_opt2_portal_url", None) or portal_url, "Option 3: Phone Hotspot Web Portal QR"))
-        tk.Label(qr_box, text="Tap yellow banner to open Safari", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(1, 0))
+        tk.Label(qr_box, text="Tap banner to open Safari / Chrome", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(1, 0))
 
         # Right Column: Live Status & Next Actions
         info_box = tk.Frame(top_row, bg="#0f172a")
@@ -6657,15 +7093,16 @@ class AirBeamSenderApp(BaseTkApp):
         url_badge = tk.Frame(info_box, bg="#1e293b", padx=8, pady=5, highlightthickness=1, highlightbackground="#0284c7")
         url_badge.pack(fill="x", pady=(0, 6))
         tk.Label(
-            url_badge, text=f"🌐 Safari Portal URL: {portal_url}",
+            url_badge, text=f"🌐 Web Portal URL: {portal_url}",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), anchor="w"
         ).pack(side="left")
 
-        # Action Buttons Row (2-column responsive grid)
+        # Action Buttons Row (3-column responsive grid)
         btn_act_row = tk.Frame(info_box, bg="#0f172a")
         btn_act_row.pack(fill="x", pady=(0, 6))
         btn_act_row.grid_columnconfigure(0, weight=1)
         btn_act_row.grid_columnconfigure(1, weight=1)
+        btn_act_row.grid_columnconfigure(2, weight=1)
 
         self.btn_copy_portal_url = tk.Button(
             btn_act_row, text="📋 Copy Portal URL", bg="#334155", fg="#f8fafc",
@@ -6682,17 +7119,26 @@ class AirBeamSenderApp(BaseTkApp):
             highlightthickness=1, highlightbackground="#38bdf8",
             command=self.open_opt2_portal_browser
         )
-        self.btn_open_portal_pc.grid(row=0, column=1, sticky="ew", padx=(3, 0), pady=2)
+        self.btn_open_portal_pc.grid(row=0, column=1, sticky="ew", padx=(3, 3), pady=2)
         bind_button_hover(self.btn_open_portal_pc, normal_bg="#0284c7", hover_bg="#0369a1", normal_fg="#ffffff", hover_fg="#ffffff")
+
+        self.btn_opt2_switch_port = tk.Button(
+            btn_act_row, text=f"🔀 Port: {self.iphone_portal_port}", bg="#1e293b", fg="#a855f7",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#6b21a8",
+            command=self.toggle_portal_port
+        )
+        self.btn_opt2_switch_port.grid(row=0, column=2, sticky="ew", padx=(3, 0), pady=2)
+        bind_button_hover(self.btn_opt2_switch_port, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#a855f7", hover_fg="#c084fc")
 
         # Numbered 4-Step Checklist: Adaptive text wrapping
         guide_box = tk.Frame(info_box, bg="#162032", padx=8, pady=5, highlightthickness=1, highlightbackground="#334155")
         guide_box.pack(fill="x")
 
         guide_steps = [
-            ("📸 Step 1:", "Open Camera on your iPhone and point it at the QR code, then tap 'Open in Safari'."),
-            ("📥 Step 2 (PC ➔ iPhone):", "Click '+ Add Files for iPhone' below on PC; they appear in Safari to Download."),
-            ("📤 Step 3 (iPhone ➔ PC):", "In Safari on iPhone, tap 'Upload Photos/Files' — they stream to 'Received_From_iPhone/'!"),
+            ("📸 Step 1:", "Open Camera on your Phone/Tablet and scan the QR code to open the Web Portal."),
+            ("📥 Step 2 (PC ➔ Mobile):", "Click '+ Add Files for Mobile' below on PC; they appear instantly in browser to Download."),
+            ("📤 Step 3 (Mobile ➔ PC):", "In phone browser, tap 'Upload Photos/Files' — they stream to 'Received_From_Mobile/'!"),
             ("📋 Step 4 (Clipboard):", "Sync copied text or links between devices with one tap using clipboard buttons.")
         ]
         opt2_desc_labels = []
@@ -6889,171 +7335,110 @@ class AirBeamSenderApp(BaseTkApp):
         else:
             messagebox.showinfo("Firewall", "Please run Fix-AirBeam-Firewall.bat in your AirBeam v5.4 folder.")
 
-    def toggle_connect_to_iphone_hotspot(self, target_state):
+    def on_phone_hotspot_qr_toggle_changed(self, target_state):
+        """Called when the user toggles the Option 3 Phone Hotspot QR switch (Instant & Non-blocking)."""
+        lbl_st = getattr(self, "lbl_phone_hotspot_qr_state", None) or getattr(self, "lbl_ios_connect_hotspot_state", None)
         if target_state:
-            ssid = self.entry_iphone_ssid.get().strip()
-            pwd = self.entry_iphone_pwd.get().strip()
-            if not ssid:
-                messagebox.showerror("Error", "Please enter your iPhone Personal Hotspot SSID name!")
-                self.ios_connect_hotspot_switch.set_state(False, trigger_callback=False)
-                return
+            if lbl_st:
+                lbl_st.config(text="ON — Generating Web Portal QR...", fg="#38bdf8")
 
-            self.iphone_hotspot_ssid = ssid
-            self.iphone_hotspot_password = pwd
-            self.save_iphone_hotspot_config()
-
-            self.lbl_ios_connect_hotspot_state.config(text=f"Connecting to '{ssid}'...", fg="#f59e0b")
-
-            def connect_worker():
-                # 1. Capture current home Wi-Fi profile before disconnecting
-                home_profile = get_best_home_wifi_profile(self)
-                cur = get_current_wifi_profile()
-                if cur and not is_hotspot_profile_name(cur):
-                    home_profile = cur
-                    self.previous_wifi_ssid = cur
-                    save_last_home_wifi(cur)
-
-                # 2. Check if a profile already exists in Windows for this iPhone
-                matched_profile = find_matching_saved_wifi_profile(ssid)
-                if not matched_profile:
-                    hex_ssid = "".join(f"{ord(c):02X}" for c in ssid)
-                    xml_content = f"""<?xml version="1.0"?>
-<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
-    <name>{ssid}</name>
-    <SSIDConfig>
-        <SSID>
-            <hex>{hex_ssid}</hex>
-            <name>{ssid}</name>
-        </SSID>
-    </SSIDConfig>
-    <connectionType>ESS</connectionType>
-    <connectionMode>manual</connectionMode>
-    <MSM>
-        <security>
-            <authEncryption>
-                <authentication>WPA2PSK</authentication>
-                <encryption>AES</encryption>
-                <useOneX>false</useOneX>
-            </authEncryption>
-            <sharedKey>
-                <keyType>passPhrase</keyType>
-                <protected>false</protected>
-                <keyMaterial>{pwd}</keyMaterial>
-            </sharedKey>
-        </security>
-    </MSM>
-</WLANProfile>"""
-                    tmp_path = os.path.join(APP_ROOT, f"_tmp_prof_{int(time.time())}.xml")
-                    try:
-                        with open(tmp_path, "w", encoding="utf-8") as f:
-                            f.write(xml_content)
-                        subprocess.run(["netsh", "wlan", "add", "profile", f"filename={tmp_path}", "user=current"], capture_output=True)
-                    finally:
-                        if os.path.exists(tmp_path):
-                            try: os.remove(tmp_path)
-                            except: pass
-                    matched_profile = ssid
-
-                # 3. Temporarily set home Wi-Fi to manual so Windows doesn't abort early to it
-                if home_profile:
-                    try:
-                        subprocess.run(["netsh", "wlan", "set", "profileparameter", f"name={home_profile}", "connectionmode=manual"], capture_output=True, timeout=2)
-                    except Exception:
-                        pass
-
-                # 4. Disconnect current Wi-Fi and allow Intel settling pause
-                native_wlan_disconnect()
-                time.sleep(1.5)
-
-                # 5. Connect natively using wlanapi.dll and netsh
-                ok, ret_code = native_wlan_connect(matched_profile)
+            def async_portal_worker():
+                cur_ip = get_local_ip()
+                ssid = "Phone Hotspot"
                 try:
-                    subprocess.run(["netsh", "wlan", "connect", f"name={matched_profile}"], capture_output=True, timeout=2)
+                    prof = get_current_wifi_profile()
+                    if prof:
+                        ssid = prof
                 except Exception:
                     pass
 
-                # 6. Poll for connection & verify STRICTLY that Windows is connected to iPhone
-                connected_ok = False
-                pc_ip = None
-                for _ in range(12):
-                    time.sleep(1.0)
-                    cur_net = get_current_wifi_profile()
-                    telem = parse_wifi_telemetry()
-                    cur_ssid = telem.get("ssid", "") or cur_net or ""
+                is_valid_ip = bool(cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254."))
+                portal_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+                self.active_opt2_portal_url = portal_url
+                img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
 
-                    is_on_iphone = bool(
-                        cur_ssid and (
-                            cur_ssid.strip().lower() == matched_profile.lower() or
-                            "iphone" in cur_ssid.strip().lower() or
-                            (ssid and cur_ssid.strip().lower() == ssid.lower())
-                        )
-                    )
+                def update_portal_ui():
+                    sw = getattr(self, "phone_hotspot_qr_switch", None) or getattr(self, "ios_connect_hotspot_switch", None)
+                    if sw and not getattr(sw, "state", False):
+                        return
+                    lbl = getattr(self, "lbl_phone_hotspot_qr_state", None) or getattr(self, "lbl_ios_connect_hotspot_state", None)
+                    if lbl:
+                        if is_valid_ip:
+                            lbl.config(text=f"ON — Portal Active at {cur_ip} ('{ssid}')", fg="#10b981")
+                        else:
+                            lbl.config(text="ON — Wi-Fi waiting for IP... Connect via [ 📶 Open Wi-Fi Menu ]", fg="#f59e0b")
+                    self.build_opt2_connected_view(portal_url, cur_ip, ssid, img_portal)
 
-                    ip_cand = get_local_ip()
-                    if is_on_iphone and ip_cand and not ip_cand.startswith("127.") and not ip_cand.startswith("169.254."):
-                        pc_ip = ip_cand
-                        connected_ok = True
-                        break
+                self.after(0, update_portal_ui)
 
-                if connected_ok and pc_ip:
-                    self.connected_to_iphone_hotspot = True
-                    portal_url = f"http://{pc_ip}:{self.iphone_portal_port}/index.html"
-                    img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
-
-                    def update_conn_ui():
-                        self.lbl_ios_connect_hotspot_state.config(text=f"ON — Connected to '{matched_profile}' at {pc_ip}", fg="#10b981")
-                        self.build_opt2_connected_view(portal_url, pc_ip, matched_profile, img_portal)
-                    self.after(0, update_conn_ui)
-                else:
-                    self.connected_to_iphone_hotspot = False
-                    # Restore home Wi-Fi auto-connect and reconnect
-                    if home_profile:
-                        try:
-                            subprocess.run(["netsh", "wlan", "set", "profileparameter", f"name={home_profile}", "connectionmode=auto"], capture_output=True, timeout=2)
-                            for _ in range(4):
-                                native_wlan_connect(home_profile)
-                                time.sleep(1.0)
-                                if get_current_wifi_profile() == home_profile:
-                                    break
-                        except Exception:
-                            pass
-
-                    def update_fail_ui():
-                        self.ios_connect_hotspot_switch.set_state(False, trigger_callback=False)
-                        restored = get_current_wifi_profile() or home_profile or "Home Wi-Fi"
-                        self.lbl_ios_connect_hotspot_state.config(
-                            text=f"Timed out. PC reconnected to '{restored}'.", fg="#ef4444"
-                        )
-                        self.build_opt2_failed_view(matched_profile, restored)
-                    self.after(0, update_fail_ui)
-
-            threading.Thread(target=connect_worker, daemon=True).start()
+            threading.Thread(target=async_portal_worker, daemon=True).start()
         else:
-            self.lbl_ios_connect_hotspot_state.config(text="Disconnecting and restoring home Wi-Fi...", fg="#f59e0b")
-            def disconnect_worker():
-                self.connected_to_iphone_hotspot = False
-                native_wlan_disconnect()
-                time.sleep(1.5)
+            self.active_opt2_portal_url = None
+            if lbl_st:
+                lbl_st.config(
+                    text="OFF (Connect PC to Phone Hotspot, then flip ON to show Web Portal QR)",
+                    fg="#94a3b8"
+                )
+            self.build_opt2_disconnected_view()
 
-                home_profile = get_best_home_wifi_profile(self)
-                if home_profile:
-                    try:
-                        subprocess.run(["netsh", "wlan", "set", "profileparameter", f"name={home_profile}", "connectionmode=auto"], capture_output=True, timeout=2)
-                    except Exception:
-                        pass
-                    for _ in range(4):
-                        native_wlan_connect(home_profile)
-                        time.sleep(1.5)
-                        cur = get_current_wifi_profile()
-                        if cur and cur.lower() == home_profile.lower():
-                            break
+    def open_windows_wifi_flyout(self):
+        """Open the native Windows 10/11 Wi-Fi available networks menu directly."""
+        try:
+            subprocess.Popen(["explorer.exe", "ms-availablenetworks:"], shell=False)
+        except Exception:
+            try:
+                os.system("start ms-availablenetworks:")
+            except Exception:
+                pass
 
-                def on_disc_ui():
-                    restored = get_current_wifi_profile() or home_profile or "Home Wi-Fi"
-                    self.lbl_ios_connect_hotspot_state.config(text=f"OFF — Reconnected to {restored}", fg="#94a3b8")
-                    self.build_opt2_disconnected_view()
-                self.after(0, on_disc_ui)
-            threading.Thread(target=disconnect_worker, daemon=True).start()
+    def refresh_phone_hotspot_qr(self):
+        """Manually re-probe local IP and re-render Option 3 QR code (Non-blocking)."""
+        lbl_st = getattr(self, "lbl_phone_hotspot_qr_state", None) or getattr(self, "lbl_ios_connect_hotspot_state", None)
+        if lbl_st:
+            lbl_st.config(text="Refreshing IP & QR...", fg="#38bdf8")
+
+        def async_ref_worker():
+            cur_ip = get_local_ip()
+            ssid = "Phone Hotspot"
+            try:
+                prof = get_current_wifi_profile()
+                if prof:
+                    ssid = prof
+            except Exception:
+                pass
+
+            is_valid_ip = bool(cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254."))
+            portal_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+            self.active_opt2_portal_url = portal_url
+            img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
+
+            def update_ref_ui():
+                qr_sw = getattr(self, "phone_hotspot_qr_switch", None) or getattr(self, "ios_connect_hotspot_switch", None)
+                if qr_sw and getattr(qr_sw, "state", False):
+                    lbl = getattr(self, "lbl_phone_hotspot_qr_state", None) or getattr(self, "lbl_ios_connect_hotspot_state", None)
+                    if lbl:
+                        if is_valid_ip:
+                            lbl.config(text=f"ON — Refreshed: {cur_ip} ('{ssid}')", fg="#10b981")
+                        else:
+                            lbl.config(text="ON — Waiting for Wi-Fi IP... Check Wi-Fi connection.", fg="#f59e0b")
+                    self.build_opt2_connected_view(portal_url, cur_ip, ssid, img_portal)
+                else:
+                    if qr_sw:
+                        qr_sw.set_state(True, trigger_callback=True)
+                    else:
+                        self.on_phone_hotspot_qr_toggle_changed(True)
+
+            self.after(0, update_ref_ui)
+
+        threading.Thread(target=async_ref_worker, daemon=True).start()
+
+    def toggle_connect_to_iphone_hotspot(self, target_state):
+        """Legacy compatibility wrapper redirecting to on_phone_hotspot_qr_toggle_changed."""
+        self.on_phone_hotspot_qr_toggle_changed(target_state)
+
+    def toggle_pwd_visibility(self):
+        """Legacy compatibility no-op."""
+        pass
 
     def load_iphone_hotspot_config(self):
         if os.path.exists(IPHONE_CONFIG_FILE):

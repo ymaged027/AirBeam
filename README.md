@@ -1,10 +1,10 @@
-# ⚡ AirBeam v5.6: Ultra-Speed Wireless Transfer
+# ⚡ AirBeam v5.7: Ultra-Speed Wireless Transfer
 ### Cross-Platform Peer-to-Peer Transfer Engine for Windows PC (x64 & ARM64), Android & iPhone / iOS
 
-[![Release](https://img.shields.io/badge/Release-v5.6-0284c7?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/ymaged027/AirBeam/releases/tag/v5.6)
+[![Release](https://img.shields.io/badge/Release-v5.7-0284c7?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/ymaged027/AirBeam/releases/tag/v5.7)
 [![Speed](https://img.shields.io/badge/Throughput-50--100%2B%20MB%2Fs-10b981?style=for-the-badge&logo=speedtest&logoColor=white)](#-performance-benchmarks)
 [![Python](https://img.shields.io/badge/Python-3.14%20%7C%203.12%20ARM64-38bdf8?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk)
+[![Android](https://img.shields.io/badge/Android-Java%20NIO%20%7C%20Knox%20Signed-3ddc84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.0-Receiver.apk)
 [![iOS](https://img.shields.io/badge/iOS%20Safari-Zero%20Install-000000?style=for-the-badge&logo=apple&logoColor=white)](#3--iphone--ios-zero-install-web-portal)
 [![License](https://img.shields.io/badge/License-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
@@ -13,17 +13,17 @@
 ## 📥 Direct Downloads & Releases
 
 > [!TIP]
-> All binary packages below are published as official [**GitHub Releases (v5.6)**](https://github.com/ymaged027/AirBeam/releases/tag/v5.6).
+> All binary packages below are published as official [**GitHub Releases (v5.7)**](https://github.com/ymaged027/AirBeam/releases/tag/v5.7).
 > If downloading from GitHub is slow due to ISP routing, use the **🚀 High-Speed CDN Mirror** links for accelerated multi-thread throughput.
 
 | Package | Format | Size | Description | Official GitHub Download | 🚀 High-Speed CDN Mirror |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **AirBeam Windows Launcher** | `.exe` (AnyCPU) | **104 KB** | Universal GUI launcher with full path-quoting & icon embedding. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam.exe) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam.exe) |
-| **AirBeam Windows Installer (x64)** | `.exe` (Inno Setup) | **32.6 MB** | Recommended for 64-bit Intel/AMD Windows 10/11. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Setup.exe) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Setup.exe) |
-| **AirBeam Portable Edition (x64)** | `.zip` (Standalone) | **57.1 MB** | Zero-install 64-bit archive. Extract and run anywhere. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Portable.zip) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Portable.zip) |
-| **AirBeam Windows ARM64 Installer** | `.exe` (Native ARM64) | **19.6 MB** | Native ARM64 edition for Snapdragon X Elite / Copilot+ PCs. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Setup.exe) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Setup.exe) |
-| **AirBeam Portable Edition (ARM64)** | `.zip` (Standalone ARM64) | **28.5 MB** | Zero-install native ARM64 archive for Snapdragon devices. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Portable.zip) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Portable.zip) |
-| **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk) |
+| **AirBeam Windows Launcher** | `.exe` (AnyCPU) | **104 KB** | Universal GUI launcher with full path-quoting & icon embedding. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam.exe) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam.exe) |
+| **AirBeam Windows Installer (x64)** | `.exe` (Inno Setup) | **32.6 MB** | Recommended for 64-bit Intel/AMD Windows 10/11. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Setup.exe) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Setup.exe) |
+| **AirBeam Portable Edition (x64)** | `.zip` (Standalone) | **57.1 MB** | Zero-install 64-bit archive. Extract and run anywhere. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Portable.zip) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Portable.zip) |
+| **AirBeam Windows ARM64 Installer** | `.exe` (Native ARM64) | **19.6 MB** | Native ARM64 edition for Snapdragon X Elite / Copilot+ PCs. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Windows-ARM64-Setup.exe) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Windows-ARM64-Setup.exe) |
+| **AirBeam Portable Edition (ARM64)** | `.zip` (Standalone ARM64) | **28.5 MB** | Zero-install native ARM64 archive for Snapdragon devices. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Windows-ARM64-Portable.zip) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Windows-ARM64-Portable.zip) |
+| **AirBeam Android Receiver** | `.apk` (Knox Signed) | **4.7 MB** | Native Android receiver app built on Java NIO multi-stream architecture. | [⬇️ **Download**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.0-Receiver.apk) | [🚀 **Fast Mirror**](https://ghproxy.net/https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.0-Receiver.apk) |
 | **iPhone / iPad / Android Web Portal** | Browser Link | *0 MB* | No app installation needed. Open Safari or Chrome and connect. | [📖 **Quick Start**](#3--iphone--ios-zero-install-web-portal) | — |
 
 ---
@@ -148,7 +148,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ## 🛠️ Quick Start Guide
 
 ### Windows PC
-1. Download [**AirBeam-v5.6-Setup.exe**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Setup.exe) (or [**AirBeam-v5.6-Windows-ARM64-Setup.exe**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Setup.exe) for Snapdragon / Copilot+ PCs) and run the installer (or extract [**AirBeam-v5.6-Portable.zip**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Portable.zip) / [**AirBeam-v5.6-Windows-ARM64-Portable.zip**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.6-Windows-ARM64-Portable.zip)).
+1. Download [**AirBeam-v5.7-Setup.exe**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Setup.exe) (or [**AirBeam-v5.7-Windows-ARM64-Setup.exe**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Windows-ARM64-Setup.exe) for Snapdragon / Copilot+ PCs) and run the installer (or extract [**AirBeam-v5.7-Portable.zip**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Portable.zip) / [**AirBeam-v5.7-Windows-ARM64-Portable.zip**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.7-Windows-ARM64-Portable.zip)).
 2. Launch AirBeam from the Desktop shortcut or Start Menu.
 3. Select your desired tab:
    - **🌐 Web Portal (iOS & Android)**: Connect any iPhone, iPad, or Android phone/tablet over Home Wi-Fi (Option 1) or Windows 5 GHz Hotspot (Option 2), scan the QR code with your camera, and beam files instantly. Also includes native socket controls for Android tablets with the AirBeam Receiver APK installed.
@@ -159,7 +159,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 1. Ensure your device is connected to the same Wi-Fi network or the PC's 5 GHz Hotspot.
 2. Open the camera or browser and scan the **Web Portal QR Code** in Tab 1 (or navigate to `http://<PC_IP>:8080/index.html`).
 3. Select files, photos, or videos to beam to your PC, or tap to download files sent from your PC.
-4. *Optional (Android)*: Install [**AirBeam-v5.0-Receiver.apk**](https://github.com/ymaged027/AirBeam/releases/download/v5.6/AirBeam-v5.0-Receiver.apk) from Tab 3 for raw multi-stream socket streaming (50–95+ MB/s).
+4. *Optional (Android)*: Install [**AirBeam-v5.0-Receiver.apk**](https://github.com/ymaged027/AirBeam/releases/download/v5.7/AirBeam-v5.0-Receiver.apk) from Tab 3 for raw multi-stream socket streaming (50–95+ MB/s).
 
 ---
 
@@ -168,13 +168,15 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 ```
 AirBeam/
 ├── setup-output/
-│   ├── AirBeam-v5.6-Setup.exe                    # Windows x64 Installer (32.6 MB)
-│   ├── AirBeam-v5.6-Portable.zip                  # Windows x64 Portable Archive (57.1 MB)
-│   ├── AirBeam-v5.6-Windows-ARM64-Setup.exe       # Native Windows ARM64 Installer (19.6 MB)
-│   └── AirBeam-v5.6-Windows-ARM64-Portable.zip   # Native Windows ARM64 Portable (28.5 MB)
+│   ├── AirBeam-v5.7-Setup.exe                    # Windows x64 Installer (32.6 MB)
+│   ├── AirBeam-v5.7-Portable.zip                  # Windows x64 Portable Archive (57.1 MB)
+│   ├── AirBeam-v5.7-Windows-ARM64-Setup.exe       # Native Windows ARM64 Installer (19.6 MB)
+│   └── AirBeam-v5.7-Windows-ARM64-Portable.zip   # Native Windows ARM64 Portable (28.5 MB)
 ├── desktop-sender/
 │   ├── sender.py                                  # Core Python GUI & Multi-Stream Engine
 │   ├── AirBeamLauncher.cs                         # Native Windows C# launcher source (AnyCPU)
+│   ├── InstallLoopback.cs                         # Headless Microsoft KM-TEST Loopback installer
+│   ├── InstallLoopback.exe                        # Native Win32 elevated Loopback installer
 │   └── assets/                                    # High-resolution icons, logos & TLS certs
 ├── android-app/                                   # Native Android Receiver project (Java NIO)
 ├── release/
@@ -182,6 +184,8 @@ AirBeam/
 │   └── AirBeam-v5.0-Receiver.apk                  # Knox V1+V2 signed Android receiver APK
 ├── AirBeam.exe                                    # Native Windows GUI Launcher (Embedded Icon & Zero Console)
 ├── Fix-AirBeam-Firewall.bat                       # Self-elevating Windows Firewall configurator
+├── Fix-AirBeam-Loopback.bat                       # Headless Loopback Adapter setup utility
+├── InstallLoopback.exe                            # Silent native Loopback Setup binary
 ├── AirBeam-Setup.iss                              # Inno Setup 6 x64 compiler configuration
 ├── AirBeam-Setup-ARM64.iss                        # Inno Setup 6 ARM64 compiler configuration
 ├── AirBeam.spec                                   # Standalone PyInstaller build configuration
