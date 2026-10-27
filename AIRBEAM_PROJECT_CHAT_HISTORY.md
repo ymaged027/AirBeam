@@ -1616,3 +1616,6 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
    - Bumped version across codebase to `v6.0`: `desktop-sender/sender.py` (window title, web portal templates, AppUserModelID `airbeam.wirelessfiletransfer.sender.6.0`, version badge, APK lookups), `desktop-sender/AirBeamLauncher.cs` (assembly `6.0.0.0`), `AirBeam-Setup.iss`, `AirBeam-Setup-ARM64.iss`, `build_arm64_release.ps1`, `create_portable_zip.ps1`, `create_shortcut.ps1`, and `README.md`.
    - Recompiled universal root launcher `AirBeam.exe` using .NET Framework `csc.exe` with embedded `airbeam.ico`.
    - Generated desktop shortcut `AirBeam v6.0.lnk` and updated `AirBeam.lnk`.
+5. **Branch Architecture & Setup Isolation**:
+   - Filtered `setup` branch to contain solely the two executable installers: `AirBeam-v6.0-Setup.exe` (x64) and `AirBeam-v6.0-Windows-ARM64-Setup.exe` (ARM64).
+   - Switched active working tree to `beta` (`origin/beta`) for all future development.
