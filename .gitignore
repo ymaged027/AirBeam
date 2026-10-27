@@ -36,3 +36,6 @@ airbeam_config.json
 .idea/
 Thumbs.db
 Desktop.ini
+
+# Local Build & Installer Outputs (Hosted on dedicated 'setup' branch)
+setup-output/
