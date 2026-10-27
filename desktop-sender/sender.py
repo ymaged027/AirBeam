@@ -613,12 +613,13 @@ def get_all_local_ips() -> set:
     try:
         host = socket.gethostname()
         for ip in socket.gethostbyname_ex(host)[2]:
-            ips.add(ip)
+            if ip and not ip.startswith("192.168.100."):
+                ips.add(ip)
     except Exception:
         pass
     try:
         local = get_local_ip()
-        if local:
+        if local and not local.startswith("192.168.100."):
             ips.add(local)
     except Exception:
         pass
@@ -676,7 +677,7 @@ def get_local_ip():
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
-        if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+        if ip and not ip.startswith("127.") and not ip.startswith("169.254.") and not ip.startswith("192.168.100."):
             return ip
     except Exception:
         pass
@@ -687,19 +688,43 @@ def get_local_ip():
         for item in socket.getaddrinfo(hostname, None):
             if item[0] == socket.AF_INET:
                 ip = item[4][0]
-                if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+                if ip and not ip.startswith("127.") and not ip.startswith("169.254.") and not ip.startswith("192.168.100."):
                     return ip
     except Exception:
         pass
 
-    # 3. Try PowerShell Get-NetIPAddress on active Wi-Fi interface
+    # 3. Try PowerShell Get-NetIPAddress on active Wi-Fi interface (filtering dummy loopback)
     try:
         cmd = ["powershell", "-NoProfile", "-Command",
-               "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi*' -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -ExpandProperty IPAddress"]
+               "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi*' -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike '192.168.100.*' } | Select-Object -ExpandProperty IPAddress"]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
         for line in res.stdout.splitlines():
             ip = line.strip()
-            if ip and not ip.startswith("127.") and not ip.startswith("169.254."):
+            if ip and not ip.startswith("127.") and not ip.startswith("169.254.") and not ip.startswith("192.168.100."):
+                return ip
+    except Exception:
+        pass
+
+    # 4. Check if Windows Hotspot is running on virtual adapter (192.168.137.1)
+    try:
+        cmd = ["powershell", "-NoProfile", "-Command",
+               "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like '192.168.137.*' } | Select-Object -ExpandProperty IPAddress -First 1"]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+        for line in res.stdout.splitlines():
+            ip = line.strip()
+            if ip and ip.startswith("192.168.137."):
+                return ip
+    except Exception:
+        pass
+
+    # 5. Check any active non-loopback IPv4 address
+    try:
+        cmd = ["powershell", "-NoProfile", "-Command",
+               "Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*' -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike '192.168.100.*' } | Select-Object -ExpandProperty IPAddress -First 1"]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+        for line in res.stdout.splitlines():
+            ip = line.strip()
+            if ip and not ip.startswith("127.") and not ip.startswith("169.254.") and not ip.startswith("192.168.100."):
                 return ip
     except Exception:
         pass
@@ -1376,8 +1401,9 @@ def cleanup_airbeam_wifi_on_exit(app_instance=None):
 
     home_profile = get_best_home_wifi_profile(app_instance)
 
-    # Check whether the app or system is on airbeam
+    # Check whether the app or system is on airbeam or offline hotspot
     is_on_airbeam = False
+    is_offline_hotspot = False
     if app_instance is not None:
         switch = getattr(app_instance, "hotspot_switch", None)
         if switch and getattr(switch, "is_on", False):
@@ -1386,8 +1412,14 @@ def cleanup_airbeam_wifi_on_exit(app_instance=None):
             is_on_airbeam = True
         if getattr(app_instance, "connected_to_iphone_hotspot", False):
             is_on_airbeam = True
+        offline_sw = getattr(app_instance, "offline_hotspot_loopback_switch", None)
+        if (offline_sw and getattr(offline_sw, "is_on", False)) or getattr(app_instance, "offline_hotspot_active", False):
+            is_offline_hotspot = True
         try:
-            WindowsHotspotController.stop_hotspot(async_mode=True)
+            if is_offline_hotspot:
+                WindowsHotspotController.stop_offline_loopback_hotspot(async_mode=True)
+            else:
+                WindowsHotspotController.stop_hotspot(async_mode=True)
         except Exception:
             pass
         portal = getattr(app_instance, "iphone_portal", None)
@@ -1444,6 +1476,10 @@ def cleanup_airbeam_wifi_on_exit(app_instance=None):
             f'    if ($curProf -eq "{escaped_home}") {{ break }}',
             "}"
         ]
+        if is_offline_hotspot:
+            ps_lines.append(
+                "$la = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -like '*Loopback*' -or $_.Name -like '*Loopback*' } | Select-Object -First 1; if ($la) { Disable-NetAdapter -Name $la.Name -Confirm:$false -ErrorAction SilentlyContinue }"
+            )
         ps_script = "\n".join(ps_lines)
         enc = base64.b64encode(ps_script.encode("utf-16le")).decode("ascii")
 
@@ -1845,6 +1881,12 @@ try {
         try {
             Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
         } catch {}
+        try {
+            netsh interface set interface name="$($adapter.Name)" admin=disable 2>$null | Out-Null
+        } catch {}
+        try {
+            Get-NetRoute -InterfaceIndex $adapter.ifIndex -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+        } catch {}
     }
 } catch {}
 """
@@ -1932,7 +1974,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
     <meta name="theme-color" content="#0B1120">
-    <title>AirBeam v5.7 • Web Portal</title>
+    <title>AirBeam v6.0 • Web Portal</title>
     <style>
         :root {
             --bg: #0B1120;
@@ -2170,7 +2212,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
     <div class="header">
-        <h1><span>⚡</span> AirBeam v5.7</h1>
+        <h1><span>⚡</span> AirBeam v6.0</h1>
         <p>Ultra-Fast Wireless Transfer for PC, Android, iPhone & iPad</p>
         <div class="badge-p2p">
             <div class="pulse-dot"></div>
@@ -3170,7 +3212,7 @@ class PCReceiverServer:
                 self._handle_worker_connection(sock, addr)
             elif magic in (b"GET ", b"POST", b"HEAD"):
                 ip = get_local_ip()
-                body = f"AirBeam v5.7 [{ARCH_TAG}] PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
+                body = f"AirBeam v6.0 [{ARCH_TAG}] PC Receiver Active on Port {self.port}!\nTransfer files directly using AirBeam desktop app or open http://{ip}:8080 in your browser.\n".encode("utf-8")
                 resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " + str(len(body)).encode("utf-8") + b"\r\nConnection: close\r\n\r\n" + body
                 sock.sendall(resp)
                 sock.close()
@@ -3782,7 +3824,7 @@ class AirBeamSenderApp(BaseTkApp):
     def __init__(self):
         super().__init__()
         self.root = self
-        self.title(f"AirBeam v5.7 [{ARCH_TAG}] — PC, Android & iPhone Ultra-Speed Wireless Transfer")
+        self.title(f"AirBeam v6.0 [{ARCH_TAG}] — PC, Android & iPhone Ultra-Speed Wireless Transfer")
         self.geometry("860x780")
         self.minsize(780, 660)
         self.configure(bg="#0f172a")
@@ -3865,7 +3907,7 @@ class AirBeamSenderApp(BaseTkApp):
         # Set Windows AppUserModelID so taskbar displays our icon
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.5.7')
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('airbeam.wirelessfiletransfer.sender.6.0')
         except Exception:
             pass
 
@@ -4199,6 +4241,9 @@ class AirBeamSenderApp(BaseTkApp):
 
     def copy_android_portal_url(self):
         ip = get_local_ip()
+        if not ip or ip.startswith("127.") or ip.startswith("169.254.") or ip.startswith("192.168.100."):
+            if getattr(self, "offline_hotspot_active", False) or getattr(self, "win_hotspot_for_iphone_active", False):
+                ip = "192.168.137.1"
         url = f"http://{ip}:{self.iphone_portal_port}/index.html?source=android"
         self.clipboard_clear()
         self.clipboard_append(url)
@@ -4208,6 +4253,9 @@ class AirBeamSenderApp(BaseTkApp):
         if not hasattr(self, "qr_android_rx_label") or not self.qr_android_rx_label.winfo_exists():
             return
         ip = get_local_ip()
+        if not ip or ip.startswith("127.") or ip.startswith("169.254.") or ip.startswith("192.168.100."):
+            if getattr(self, "offline_hotspot_active", False) or getattr(self, "win_hotspot_for_iphone_active", False):
+                ip = "192.168.137.1"
         self.local_ip = ip
         portal_url = f"http://{ip}:{self.iphone_portal_port}/index.html?source=android"
         qr_img = self.generate_qr_image(portal_url, box_size=3, border=2)
@@ -4524,7 +4572,14 @@ class AirBeamSenderApp(BaseTkApp):
         except Exception:
             pass
         try:
-            WindowsHotspotController.stop_hotspot(async_mode=True)
+            offline_on = bool(
+                getattr(self, "offline_hotspot_active", False) or
+                (hasattr(self, "offline_hotspot_loopback_switch") and getattr(self.offline_hotspot_loopback_switch, "is_on", False))
+            )
+            if offline_on:
+                WindowsHotspotController.stop_offline_loopback_hotspot(async_mode=True)
+            else:
+                WindowsHotspotController.stop_hotspot(async_mode=True)
         except Exception:
             pass
         try:
@@ -4560,6 +4615,8 @@ class AirBeamSenderApp(BaseTkApp):
         candidates = []
         for r in roots:
             candidates.extend([
+                os.path.join(r, "release", "AirBeam-v6.0-Receiver.apk"),
+                os.path.join(r, "AirBeam-v6.0-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.7-Receiver.apk"),
                 os.path.join(r, "AirBeam-v5.7-Receiver.apk"),
                 os.path.join(r, "release", "AirBeam-v5.6-Receiver.apk"),
@@ -4901,7 +4958,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         lbl_ver_badge = tk.Label(
             brand_frame,
-            text=f"v5.7 [{ARCH_TAG}]",
+            text=f"v6.0 [{ARCH_TAG}]",
             bg="#1e293b",
             fg="#94a3b8",
             font=("Segoe UI", 8, "bold"),

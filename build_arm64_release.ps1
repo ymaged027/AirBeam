@@ -8,7 +8,7 @@ $isccPath = "C:\Users\youssef\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 $cscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 Write-Host "=========================================================="
-Write-Host " Building Native Windows ARM64 Release for AirBeam v5.7"
+Write-Host " Building Native Windows ARM64 Release for AirBeam v6.0"
 Write-Host "=========================================================="
 
 if (-not (Test-Path $setupOutputDir)) {
@@ -86,8 +86,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "AirBeam.exe compilation failed with exit code $LASTEXITCODE"
 }
 
-# 6. Build Portable ZIP (setup-output\AirBeam-v5.7-Windows-ARM64-Portable.zip)
-$arm64Zip = "$setupOutputDir\AirBeam-v5.7-Windows-ARM64-Portable.zip"
+# 6. Build Portable ZIP (setup-output\AirBeam-v6.0-Windows-ARM64-Portable.zip)
+$arm64Zip = "$setupOutputDir\AirBeam-v6.0-Windows-ARM64-Portable.zip"
 if (Test-Path $arm64Zip) { Remove-Item $arm64Zip -Force }
 Write-Host "Compressing $arm64Zip..."
 Compress-Archive -Path "$distArm64\*" -DestinationPath $arm64Zip -CompressionLevel Optimal

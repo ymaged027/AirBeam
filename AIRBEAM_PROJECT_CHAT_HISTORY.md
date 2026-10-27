@@ -1588,3 +1588,31 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
    - Built x64 Portable distribution archive (`setup-output/AirBeam-v5.7-Portable.zip`).
    - Built native Windows ARM64 installer (`setup-output/AirBeam-v5.7-Windows-ARM64-Setup.exe`) and portable zip (`setup-output/AirBeam-v5.7-Windows-ARM64-Portable.zip`).
    - Updated desktop shortcuts and documentation.
+
+
+## 46. AirBeam v6.0 - Loopback IP QR Isolation, Full Window-Close Teardown & Zero-Regression Hardening
+
+### User Requests:
+1. *"fix the qr code problem"*
+2. *"when closeing while offline hotspot is on revert every thing the toggle did when it turned on"*
+3. *"do not make new bugs"*
+4. *"bump the version to 6.0"*
+
+### Technical Root Causes & Engineering Solutions:
+1. **Loopback IP QR Code Leaking Resolved (`192.168.100.x` $\rightarrow$ `192.168.137.1` / Wi-Fi LAN)**:
+   - *Root Cause:* When Offline Loopback Hotspot was enabled without an active internet router, Python's UDP route probe (`s.connect(("8.8.8.8", 80))`) routed through the dummy gateway `192.168.100.1`, causing `get_local_ip()` to return `192.168.100.x`. Tab 1 and Web Portal QR codes and URLs displayed this unreachable IP, preventing connecting phones from loading the portal.
+   - *Fix:* Explicitly filtered out `192.168.100.*` (along with `127.*` and `169.254.*`) across `get_local_ip()`, `get_all_local_ips()`, and Android/iOS Web Portal views. Added virtual adapter detection for `192.168.137.*`, ensuring QR codes and links cleanly resolve to `192.168.137.1` when Hotspot is active or the real Wi-Fi LAN IP.
+
+2. **Full Window-Close Teardown on Exit**:
+   - *Root Cause:* Previously, `on_window_close()` and `cleanup_airbeam_wifi_on_exit()` only called `WindowsHotspotController.stop_hotspot(async_mode=True)`. If the user closed AirBeam with the `[X]` button while Offline Hotspot was ON, the loopback adapter remained active.
+   - *Fix:* Added state checks for `self.offline_hotspot_active` and `offline_hotspot_loopback_switch.is_on`. If the offline hotspot was active on app exit, AirBeam automatically calls `WindowsHotspotController.stop_offline_loopback_hotspot(async_mode=True)` and dispatches background loopback teardown in the detached exit process, completely reversing the adapter and hotspot without freezing or delaying the window close.
+
+3. **Zero-Regression Hardening**:
+   - Strictly avoided executing `route delete 0.0.0.0` anywhere in the codebase; any loopback route cleanup is scoped strictly to the loopback interface index (`Get-NetRoute -InterfaceIndex $adapter.ifIndex`).
+   - Zero UAC prompts or `InstallLoopback.exe` invocations on app launch or close.
+   - Full backward compatibility maintained for all P2P transfer modes, Android receiver APKs, and Wi-Fi Direct connections.
+
+4. **Version Increment to v6.0**:
+   - Bumped version across codebase to `v6.0`: `desktop-sender/sender.py` (window title, web portal templates, AppUserModelID `airbeam.wirelessfiletransfer.sender.6.0`, version badge, APK lookups), `desktop-sender/AirBeamLauncher.cs` (assembly `6.0.0.0`), `AirBeam-Setup.iss`, `AirBeam-Setup-ARM64.iss`, `build_arm64_release.ps1`, `create_portable_zip.ps1`, `create_shortcut.ps1`, and `README.md`.
+   - Recompiled universal root launcher `AirBeam.exe` using .NET Framework `csc.exe` with embedded `airbeam.ico`.
+   - Generated desktop shortcut `AirBeam v6.0.lnk` and updated `AirBeam.lnk`.
