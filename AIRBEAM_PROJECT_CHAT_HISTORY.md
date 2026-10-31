@@ -1692,3 +1692,8 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
 x_tools_card.
      * Implemented update_ios_upload_progress and complete_ios_upload_progress hooked into the HTTP stream loop in do_POST.
      * Displays real-time filename, progress percentage, megabytes received out of total, live transfer speed in MB/s, and dynamic ETA in seconds on the PC screen.
+
+10. **Universal Web Portal QR Codes with http://airbeam.local:8080**:
+   - Standardized all Web Portal QR codes and links across the PC application to use the universal hostname http://airbeam.local:8080 (Option 1 Home Wi-Fi, Option 2 Windows Mobile Hotspot, Option 3 Phone Hotspot, PC-to-PC Web Portal, Zoom Modals, and Placeholders).
+   - Leveraging the dynamic multi-interface mDNS and local DNS responder, http://airbeam.local:8080 resolves seamlessly and authoritatively across all three connection modes without being tied to a fluctuating IP address.
+   - Significantly reduced QR matrix density (shorter character payload), producing larger blocks for instantaneous scanning from iPhone and Android cameras across any distance.

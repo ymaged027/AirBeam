@@ -656,7 +656,8 @@ HTTP_PORT = 8080
 APK_SERVER_PORT = 8888
 IPHONE_PORTAL_PORT = 8080
 IPHONE_PORTAL_PORTS = (8080, 8090)
-AIRBEAM_ICLOUD_SHORTCUT_URL = "https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62" 
+AIRBEAM_ICLOUD_SHORTCUT_URL = "https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62"
+AIRBEAM_LOCAL_HOST = "airbeam.local" 
 IPHONE_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_iPhone")
 IPHONE_CONFIG_FILE = os.path.join(APP_ROOT, "iphone_hotspot_config.json")
 PC_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_PC")
@@ -4330,9 +4331,9 @@ class AirBeamSenderApp(BaseTkApp):
         self.win_hotspot_for_iphone_active = False
         self.active_mobile_mode = "HOME_WIFI"
         self.active_win_hotspot_wifi_str = "WIFI:T:WPA;S:airbeam;P:airbeam123;;"
-        self.active_win_hotspot_portal_url = f"http://192.168.137.1:{self.iphone_portal_port}/index.html"
+        self.active_win_hotspot_portal_url = f"http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port}"
         self.active_pc_hotspot_wifi_str = "WIFI:T:WPA;S:airbeam;P:airbeam123;;"
-        self.active_pc_hotspot_portal_url = f"http://192.168.137.1:{self.iphone_portal_port}/index.html"
+        self.active_pc_hotspot_portal_url = f"http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port}"
         self.load_iphone_hotspot_config()
 
         # iOS stream byte tracker for precision speedometer
@@ -4433,6 +4434,9 @@ class AirBeamSenderApp(BaseTkApp):
         # Start Coordinator and Wi-Fi link telemetry poller in background
         self.after(500, self.start_discovery_coordinator)
         self.after(800, self.update_wifi_telemetry_loop)
+
+    def get_universal_portal_url(self) -> str:
+        return f"http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port}"
 
     def bring_to_front(self):
         """Restores window from minimized state and brings it to the top foreground."""
@@ -5209,7 +5213,8 @@ class AirBeamSenderApp(BaseTkApp):
                     if getattr(self, "_last_telem_opt3_ip", None) != cur_ip:
                         self._last_telem_opt3_ip = cur_ip
                         self.lbl_opt3_status.config(text=f"✅ Active on Wi-Fi: {cur_prof}  •  PC IP: {cur_ip}")
-                        portal_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+                        portal_url = self.get_universal_portal_url()
+                        self.active_opt3_portal_url = portal_url
                         if hasattr(self, "lbl_opt3_url"):
                             self.lbl_opt3_url.config(text=f"🌐 Safari Portal URL: {portal_url}")
                         if hasattr(self, "qr_opt3_label"):
@@ -5226,7 +5231,7 @@ class AirBeamSenderApp(BaseTkApp):
             if qr_sw and getattr(qr_sw, "state", False):
                 cur_ip = get_local_ip()
                 active_url = getattr(self, "active_opt2_portal_url", "")
-                expected_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+                expected_url = self.get_universal_portal_url()
                 if cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254.") and active_url != expected_url:
                     self.active_opt2_portal_url = expected_url
                     img_portal = self.generate_qr_image(expected_url, box_size=4, border=2)
@@ -5633,10 +5638,10 @@ class AirBeamSenderApp(BaseTkApp):
         tk.Label(step2_box, text="Point Camera here → Tap 'Open in Browser'", bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 8)).pack(pady=(2, 6))
         self.qr_ios_portal_label = tk.Label(step2_box, bg="#0f172a", cursor="hand2")
         self.qr_ios_portal_label.pack(pady=4)
-        self.qr_ios_portal_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "Windows Hotspot Web Portal QR"))
+        self.qr_ios_portal_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_portal_url", "") or self.get_universal_portal_url(), "Windows Hotspot Web Portal QR"))
         lbl_zoom_p = tk.Label(step2_box, text="🔍 Click QR to enlarge", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 8, "bold"), cursor="hand2")
         lbl_zoom_p.pack(pady=(0, 2))
-        lbl_zoom_p.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "Windows Hotspot Web Portal QR"))
+        lbl_zoom_p.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_win_hotspot_portal_url", "") or self.get_universal_portal_url(), "Windows Hotspot Web Portal QR"))
 
         self.lbl_ios_win_hotspot_creds = tk.Label(
             opt1_card, text="Turn ON switch above to generate Wi-Fi Auto-Join & Web Portal QR codes.",
@@ -6346,10 +6351,10 @@ class AirBeamSenderApp(BaseTkApp):
         tk.Label(box_qr_portal, text="🌐 Open Web Portal", bg="#162032", fg="#10b981", font=("Segoe UI", 8, "bold")).pack()
         self.qr_pc_hotspot_portal_label = tk.Label(box_qr_portal, bg="#162032", cursor="hand2")
         self.qr_pc_hotspot_portal_label.pack(pady=2)
-        self.qr_pc_hotspot_portal_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "PC Hotspot Web Portal QR"))
+        self.qr_pc_hotspot_portal_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_portal_url", "") or self.get_universal_portal_url(), "PC Hotspot Web Portal QR"))
         lbl_zoom_pc_p = tk.Label(box_qr_portal, text="🔍 Click to enlarge", bg="#162032", fg="#38bdf8", font=("Segoe UI", 7, "bold"), cursor="hand2")
         lbl_zoom_pc_p.pack()
-        lbl_zoom_pc_p.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_portal_url", "") or f"http://192.168.137.1:{self.iphone_portal_port}/index.html", "PC Hotspot Web Portal QR"))
+        lbl_zoom_pc_p.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(getattr(self, "active_pc_hotspot_portal_url", "") or self.get_universal_portal_url(), "PC Hotspot Web Portal QR"))
 
         self.reset_pc_hotspot_qr_placeholders()
 
@@ -6539,7 +6544,7 @@ class AirBeamSenderApp(BaseTkApp):
         left_web_box = tk.Frame(web_mid_row, bg="#1e293b")
         left_web_box.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        web_url = f"http://{self.local_ip}:{self.iphone_portal_port}/index.html"
+        web_url = self.get_universal_portal_url()
         self.lbl_pc_web_url = tk.Label(
             left_web_box, text=f"🌐 Web Portal: {web_url}",
             bg="#0f172a", fg="#38bdf8", font=("Consolas", 10, "bold"),
@@ -6565,10 +6570,10 @@ class AirBeamSenderApp(BaseTkApp):
         tk.Label(qr_card, text="🌐 Web Portal Link", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 8, "bold")).pack()
         self.qr_pc_web_label = tk.Label(qr_card, bg="#0f172a", cursor="hand2")
         self.qr_pc_web_label.pack(pady=2)
-        self.qr_pc_web_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(f"http://{self.local_ip}:{self.iphone_portal_port}/index.html", "PC Web Portal QR"))
+        self.qr_pc_web_label.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(self.get_universal_portal_url(), "PC Web Portal QR"))
         lbl_zoom_pc_web = tk.Label(qr_card, text="🔍 Click to enlarge", bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 7, "bold"), cursor="hand2")
         lbl_zoom_pc_web.pack()
-        lbl_zoom_pc_web.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(f"http://{self.local_ip}:{self.iphone_portal_port}/index.html", "PC Web Portal QR"))
+        lbl_zoom_pc_web.bind("<Button-1>", lambda e: self.show_qr_zoom_modal(self.get_universal_portal_url(), "PC Web Portal QR"))
         tk.Label(qr_card, text="Scan with 2nd PC camera or phone", bg="#0f172a", fg="#64748b", font=("Segoe UI", 7)).pack()
         if img_qr:
             self.qr_pc_web_label.config(image=img_qr)
@@ -6993,7 +6998,7 @@ class AirBeamSenderApp(BaseTkApp):
             self.btn_pc_mode_hotspot._cur_fg = "#94a3b8"
             self.pc_wifi_mode_panel.pack(fill="x", pady=(6, 0))
             self.pc_hotspot_mode_panel.pack_forget()
-            web_url = f"http://{self.local_ip}:{self.iphone_portal_port}/index.html"
+            web_url = self.get_universal_portal_url()
             if hasattr(self, "lbl_pc_web_url"):
                 self.lbl_pc_web_url.config(text=f"🌐 Web Portal: {web_url}")
             img_qr = self.generate_qr_image(web_url, box_size=3, border=2)
@@ -7010,7 +7015,7 @@ class AirBeamSenderApp(BaseTkApp):
             self.pc_wifi_mode_panel.pack_forget()
             self.pc_hotspot_mode_panel.pack(fill="x", pady=(6, 0))
             hotspot_ip = "192.168.137.1"
-            web_url = f"http://{hotspot_ip}:{self.iphone_portal_port}/index.html"
+            web_url = self.get_universal_portal_url()
             if hasattr(self, "lbl_pc_web_url"):
                 self.lbl_pc_web_url.config(text=f"🌐 Web Portal: {web_url}")
             img_qr = self.generate_qr_image(web_url, box_size=3, border=2)
@@ -7030,7 +7035,7 @@ class AirBeamSenderApp(BaseTkApp):
                     pwd = res.get("passphrase", "airbeam123").strip()
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
-                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+                    portal_url = self.get_universal_portal_url()
                     self.active_pc_hotspot_wifi_str = wifi_qr
                     self.active_pc_hotspot_portal_url = portal_url
                     img_wifi = self.generate_qr_image(wifi_qr, box_size=3, border=2)
@@ -7069,7 +7074,7 @@ class AirBeamSenderApp(BaseTkApp):
                     self.lbl_pc_hotspot_state.config(text="OFF (Click switch to enable Windows 5 GHz Hotspot)", fg="#94a3b8")
                     self.lbl_pc_hotspot_creds.config(text="Turn ON switch above to start 5 GHz Hotspot and generate connection credentials.", fg="#94a3b8")
                     self.reset_pc_hotspot_qr_placeholders()
-                    web_url = f"http://{self.local_ip}:{self.iphone_portal_port}/index.html"
+                    web_url = self.get_universal_portal_url()
                     if hasattr(self, "lbl_pc_web_url"):
                         self.lbl_pc_web_url.config(text=f"🌐 Web Portal: {web_url}")
                     img_qr = self.generate_qr_image(web_url, box_size=3, border=2)
@@ -7081,7 +7086,7 @@ class AirBeamSenderApp(BaseTkApp):
 
     def reset_pc_hotspot_qr_placeholders(self):
         dummy_wifi = self.generate_qr_image("WIFI:T:WPA;S:airbeam;P:airbeam123;;", box_size=3, border=2)
-        dummy_portal = self.generate_qr_image(f"http://192.168.137.1:{self.iphone_portal_port}/index.html", box_size=3, border=2)
+        dummy_portal = self.generate_qr_image(self.get_universal_portal_url(), box_size=3, border=2)
         if dummy_wifi and hasattr(self, "qr_pc_hotspot_wifi_label"):
             self.qr_pc_hotspot_wifi_label.config(image=dummy_wifi)
             self.qr_pc_hotspot_wifi_label.image = dummy_wifi
@@ -7090,7 +7095,7 @@ class AirBeamSenderApp(BaseTkApp):
             self.qr_pc_hotspot_portal_label.image = dummy_portal
 
     def copy_pc_hotspot_url(self):
-        url = f"http://192.168.137.1:{self.iphone_portal_port}/index.html"
+        url = self.get_universal_portal_url()
         self.clipboard_clear()
         self.clipboard_append(url)
         if hasattr(self, "btn_copy_pc_hotspot_url"):
@@ -7198,7 +7203,7 @@ class AirBeamSenderApp(BaseTkApp):
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
 
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
-                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+                    portal_url = self.get_universal_portal_url()
                     self.active_win_hotspot_wifi_str = wifi_qr
                     self.active_win_hotspot_portal_url = portal_url
 
@@ -7399,7 +7404,7 @@ class AirBeamSenderApp(BaseTkApp):
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
 
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
-                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+                    portal_url = self.get_universal_portal_url()
                     self.active_win_hotspot_wifi_str = wifi_qr
                     self.active_win_hotspot_portal_url = portal_url
 
@@ -7618,7 +7623,7 @@ class AirBeamSenderApp(BaseTkApp):
         except Exception:
             pass
 
-        portal_url = f"http://{host_ip}:{self.iphone_portal_port}/index.html"
+        portal_url = self.get_universal_portal_url()
         self.active_win_hotspot_portal_url = portal_url
         img = self.generate_qr_image(portal_url, box_size=4, border=2)
         if img:
@@ -7803,7 +7808,7 @@ class AirBeamSenderApp(BaseTkApp):
             widget.destroy()
 
         ip = get_local_ip()
-        portal_url = f"http://{ip}:{self.iphone_portal_port}/index.html"
+        portal_url = self.get_universal_portal_url()
         self.active_opt3_portal_url = portal_url
         img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
         cur_wifi = get_current_wifi_profile() or get_best_home_wifi_profile(self) or "Home Wi-Fi"
@@ -8010,7 +8015,7 @@ class AirBeamSenderApp(BaseTkApp):
                     pass
 
                 is_valid_ip = bool(cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254."))
-                portal_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+                portal_url = self.get_universal_portal_url()
                 self.active_opt2_portal_url = portal_url
                 img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
 
@@ -8065,7 +8070,7 @@ class AirBeamSenderApp(BaseTkApp):
                 pass
 
             is_valid_ip = bool(cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254."))
-            portal_url = f"http://{cur_ip}:{self.iphone_portal_port}/index.html"
+            portal_url = self.get_universal_portal_url()
             self.active_opt2_portal_url = portal_url
             img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
 
@@ -8224,7 +8229,7 @@ class AirBeamSenderApp(BaseTkApp):
         messagebox.showinfo("Clipboard Ready", f"Windows Clipboard is now live in the Web Portal!\n\nContent:\n{txt[:120]}...\n\nOpen Safari or Chrome on your device to copy or open the link.")
 
     def reset_ios_qr_placeholders(self):
-        portal_url = f"http://{self.local_ip}:{self.iphone_portal_port}/index.html"
+        portal_url = self.get_universal_portal_url()
         dummy_wifi = self.generate_qr_image("WIFI:T:WPA;S:AirBeamHotspot;P:airbeam123;;", box_size=4, border=2)
         dummy_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
         if dummy_wifi:
@@ -8236,7 +8241,7 @@ class AirBeamSenderApp(BaseTkApp):
 
     def refresh_ios_qr_codes(self):
         ip = get_local_ip()
-        portal_url = f"http://{ip}:{self.iphone_portal_port}/index.html"
+        portal_url = self.get_universal_portal_url()
         img = self.generate_qr_image(portal_url, box_size=4, border=2)
         if img:
             self.qr_ios_portal_label.config(image=img)
