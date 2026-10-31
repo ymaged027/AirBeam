@@ -1665,3 +1665,8 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
    - Apple iOS 15 through 18 blocks externally downloaded `.shortcut` binary files with *"Shortcut can't be opened because it is not signed"*, having removed the old manual *"Allow Untrusted Shortcuts"* toggle.
    - Enhanced the Web Portal with a `shortcuts://create-shortcut` 1-tap deep link, a 1-tap upload URL copy button (`http://airbeam.local:8080/upload`), and a visual 30-second guide to create the single-action workflow natively on the iPhone (permanently signed by the device's Apple ID).
    - Added an interactive setup modal on the PC desktop interface (`show_ios_shortcut_modal`) with one-click clipboard copying and full step-by-step guidance.
+   7. **Official Apple-Signed iCloud Link Integration (`64fb6a4308124708937953f6fd8f9f62`)**:
+   - Integrated the user's verified Apple iCloud shortcut link: `https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62`.
+   - Web Portal now displays a prominent **`[ 📥 Install AirBeam Shortcut (1-Click Apple Signed) ]`** button that opens natively in the iOS Shortcuts app with zero security warnings.
+   - `/airbeam.shortcut` automatically redirects to the signed iCloud link, while serving the cached signed binary container (`desktop-sender/assets/AirBeam_Signed.shortcut`) when requested directly.
+   - Enhanced the desktop app shortcut modal with a camera-scannable QR code directly opening the iCloud Shortcut on any iPhone or iPad.

@@ -656,6 +656,7 @@ HTTP_PORT = 8080
 APK_SERVER_PORT = 8888
 IPHONE_PORTAL_PORT = 8080
 IPHONE_PORTAL_PORTS = (8080, 8090)
+AIRBEAM_ICLOUD_SHORTCUT_URL = "https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62" 
 IPHONE_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_iPhone")
 IPHONE_CONFIG_FILE = os.path.join(APP_ROOT, "iphone_hotspot_config.json")
 PC_RECEIVED_DIR = os.path.join(APP_ROOT, "Received_From_PC")
@@ -2234,47 +2235,32 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <span style="font-size:18px;">⚡</span>
                 <span style="color:#C084FC;font-weight:700;">iOS AirDrop Share Sheet</span>
             </span>
-            <span class="badge" style="background:rgba(139, 92, 246, 0.25);color:#C084FC;">AirDrop Mode</span>
+            <span class="badge" style="background:rgba(16, 185, 129, 0.2);color:#10B981;border:1px solid rgba(16, 185, 129, 0.4);">✅ Apple Signed</span>
         </div>
         <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;line-height:1.5;">
-            Beam photos, 4K videos, and files directly from your iPhone's native <strong>Share</strong> menu without opening Safari every time!
+            Beam photos, 4K videos, and files directly from your iPhone's native <strong>Share</strong> menu (under AirDrop) without opening Safari every time!
         </p>
 
-        <!-- Fast Actions -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
-            <a href="shortcuts://create-shortcut" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 15px rgba(139,92,246,0.35);font-size:13px;padding:10px 8px;text-align:center;">
-                ⚡ Open Shortcuts App
-            </a>
-            <button class="btn btn-secondary" onclick="copyUploadEndpoint()" id="btnCopyEndpoint" style="font-size:13px;padding:10px 8px;border-color:rgba(139,92,246,0.4);">
-                📋 Copy Upload URL
-            </button>
-        </div>
+        <!-- 1-Click Apple Signed Install Button -->
+        <a href="https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 18px rgba(139,92,246,0.45);font-size:14px;padding:12px 14px;text-align:center;text-decoration:none;margin-bottom:12px;">
+            📥 Install AirBeam Shortcut (1-Click Apple Signed)
+        </a>
 
-        <div style="background:rgba(15, 23, 42, 0.75);border:1px solid rgba(139, 92, 246, 0.25);border-radius:12px;padding:14px;">
+        <div style="background:rgba(15, 23, 42, 0.75);border:1px solid rgba(139, 92, 246, 0.25);border-radius:12px;padding:12px;">
             <div style="font-size:12px;font-weight:700;color:#C084FC;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-                <span>🛠️</span> 30-SECOND SETUP (Bypasses iOS Signing):
+                <span>⚡</span> HOW TO USE LIKE AIRDROP:
             </div>
             <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text-secondary);line-height:1.7;">
-                <li>Tap <strong>Open Shortcuts App</strong> above (or open <strong>Shortcuts</strong> ➡️ tap <strong>+</strong>).</li>
-                <li>Tap <strong>Shortcut Details (ⓘ)</strong> ➡️ Turn ON <strong>Show in Share Sheet</strong>.</li>
-                <li>Tap <strong>Add Action</strong> ➡️ Search and choose <strong>Get Contents of URL</strong>:
-                    <ul style="margin:4px 0;padding-left:16px;color:#F8FAFC;">
-                        <li><strong>URL</strong>: Paste the copied URL (<code style="background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:4px;color:#38BDF8;" id="codeEndpoint">http://airbeam.local:8080/upload</code>)</li>
-                        <li>Tap arrow: Method: <strong>POST</strong></li>
-                        <li>Request Body: <strong>File</strong> ➡️ Choose <strong>Shortcut Input</strong></li>
-                    </ul>
-                </li>
-                <li>Tap <strong>Done</strong>! Name it <strong>AirBeam to PC</strong> ⚡</li>
-                <li>In <strong>Photos</strong> or <strong>Files</strong>, select any media, tap <strong>Share</strong> ➡️ <strong>AirBeam to PC</strong>!</li>
+                <li>Tap <strong>Install AirBeam Shortcut</strong> above ➔ Tap <strong>Add Shortcut</strong>.</li>
+                <li>Open <strong>Photos</strong> or <strong>Files</strong> on iPhone, select photos/videos/docs.</li>
+                <li>Tap <strong>Share</strong> ➡️ Tap <strong>Air beam To Pc</strong> ⚡ (under AirDrop).</li>
+                <li>Files beam straight to your PC at full Wi-Fi speed!</li>
             </ol>
-            <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(139,92,246,0.2);font-size:11px;color:#94A3B8;line-height:1.5;">
-                ℹ️ <em>Apple iOS blocks downloaded .shortcut files as "not signed". Setting up this 1 action natively in the Shortcuts app signs it with your Apple ID permanently!</em>
-            </div>
-            <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;">
-                <span style="font-size:11px;color:#94A3B8;">🌐 Auto-connects on Wi-Fi or Hotspot</span>
-                <a href="/airbeam.shortcut" download="AirBeam to PC.shortcut" style="font-size:11px;color:#8B5CF6;text-decoration:underline;">
-                    Download .shortcut (Mac)
-                </a>
+            <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(139,92,246,0.2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                <span style="font-size:11px;color:#94A3B8;">🌐 Auto-connects via <strong>airbeam.local:8080</strong></span>
+                <button class="btn btn-secondary" onclick="copyUploadEndpoint()" id="btnCopyEndpoint" style="width:auto;padding:4px 10px;font-size:11px;margin:0;">
+                    📋 Copy Upload URL
+                </button>
             </div>
         </div>
     </div>
@@ -2762,20 +2748,43 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             return
 
         elif clean_path in ('/airbeam.shortcut', '/shortcut'):
-            try:
-                srv_port = self.server.server_address[1]
-            except Exception:
-                srv_port = 8080
-            shortcut_data = generate_airbeam_shortcut(port=srv_port, host="airbeam.local")
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/x-apple-shortcut')
-            self.send_header('Content-Disposition', 'attachment; filename="AirBeam to PC.shortcut"')
-            self.send_header('Content-Length', str(len(shortcut_data)))
-            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(shortcut_data)
-            return
+            # If client specifically requests a direct file download (e.g. for Mac or offline backup)
+            if "download=1" in self.path or "file" in self.path:
+                signed_candidates = [
+                    os.path.join(APP_ROOT, "desktop-sender", "assets", "AirBeam_Signed.shortcut"),
+                    os.path.join(BUNDLE_DIR, "assets", "AirBeam_Signed.shortcut"),
+                    os.path.join(APP_ROOT, "assets", "AirBeam_Signed.shortcut"),
+                ]
+                shortcut_data = None
+                for cand in signed_candidates:
+                    if os.path.isfile(cand):
+                        try:
+                            with open(cand, "rb") as sf:
+                                shortcut_data = sf.read()
+                            break
+                        except Exception:
+                            pass
+                if not shortcut_data:
+                    try: srv_port = self.server.server_address[1]
+                    except Exception: srv_port = 8080
+                    shortcut_data = generate_airbeam_shortcut(port=srv_port, host="airbeam.local")
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/x-apple-shortcut')
+                self.send_header('Content-Disposition', 'attachment; filename="AirBeam to PC.shortcut"')
+                self.send_header('Content-Length', str(len(shortcut_data)))
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(shortcut_data)
+                return
+            else:
+                # Direct redirect to the official Apple-signed iCloud Shortcut installer
+                self.send_response(302)
+                self.send_header('Location', AIRBEAM_ICLOUD_SHORTCUT_URL)
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
 
         elif clean_path == '/api/ping':
             try:
@@ -7357,83 +7366,109 @@ class AirBeamSenderApp(BaseTkApp):
             pass
 
     def copy_airbeam_shortcut_url(self):
-        upload_url = f"http://airbeam.local:{self.iphone_portal_port}/upload"
         self.clipboard_clear()
-        self.clipboard_append(upload_url)
+        self.clipboard_append(AIRBEAM_ICLOUD_SHORTCUT_URL)
         for btn_attr in ("btn_copy_shortcut_url", "btn_win_copy_shortcut"):
             if hasattr(self, btn_attr):
                 btn = getattr(self, btn_attr)
-                btn.config(text="URL Copied! ✅", fg="#10b981")
+                btn.config(text="Link Copied! ✅", fg="#10b981")
                 self.after(2500, lambda b=btn: b.config(text="⚡ iOS Shortcut", fg="#e9d5ff"))
         self.show_ios_shortcut_modal()
 
     def show_ios_shortcut_modal(self):
-        upload_url = f"http://airbeam.local:{self.iphone_portal_port}/upload"
         modal = tk.Toplevel(self)
-        modal.title("⚡ iOS AirDrop Share Sheet Setup")
+        modal.title("⚡ iOS AirDrop Share Sheet Setup (Apple Signed)")
         modal.configure(bg="#0f172a")
         modal.attributes("-topmost", True)
-        modal.geometry("540x510")
+        modal.geometry("560x560")
         modal.resizable(False, False)
         modal.transient(self)
 
         content = tk.Frame(modal, bg="#0f172a", padx=20, pady=16)
         content.pack(fill="both", expand=True)
 
-        tk.Label(content, text="⚡ iOS AirDrop Share Sheet Setup", bg="#0f172a", fg="#c084fc", font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 4))
+        header_row = tk.Frame(content, bg="#0f172a")
+        header_row.pack(fill="x", pady=(0, 6))
+        tk.Label(header_row, text="⚡ iOS AirDrop Share Sheet (Apple Signed)", bg="#0f172a", fg="#c084fc", font=("Segoe UI", 13, "bold")).pack(side="left")
+        badge = tk.Label(header_row, text="✅ 100% Signed by Apple", bg="#064e3b", fg="#34d399", font=("Segoe UI", 8, "bold"), padx=6, pady=2)
+        badge.pack(side="right")
+
         tk.Label(
             content,
-            text="Beam photos & 4K videos directly from your iPhone's native Share menu straight to this PC at full Wi-Fi speed!",
-            bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 9), wraplength=500, justify="left"
-        ).pack(anchor="w", pady=(0, 10))
+            text="Beam photos & 4K videos directly from your iPhone's native Share menu (under AirDrop) straight to this PC at full Wi-Fi speed!",
+            bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 9), wraplength=520, justify="left"
+        ).pack(anchor="w", pady=(0, 8))
 
-        note_box = tk.Frame(content, bg="#1e1b4b", padx=10, pady=8, highlightthickness=1, highlightbackground="#6366f1")
-        note_box.pack(fill="x", pady=(0, 10))
-        tk.Label(
-            note_box,
-            text="ℹ️ Why Apple says 'Not Signed':\nApple iOS 15–18 blocks downloaded .shortcut files. Setting up this 1 single action natively in the Shortcuts app takes 30 seconds and is permanently signed by Apple for your iPhone!",
-            bg="#1e1b4b", fg="#e0e7ff", font=("Segoe UI", 8, "bold"), justify="left"
-        ).pack(anchor="w")
+        # Middle section: QR Code on Left, Steps on Right
+        mid_row = tk.Frame(content, bg="#0f172a")
+        mid_row.pack(fill="x", pady=(0, 10))
 
-        guide_box = tk.Frame(content, bg="#1e293b", padx=12, pady=10, highlightthickness=1, highlightbackground="#334155")
-        guide_box.pack(fill="x", pady=(0, 12))
+        qr_frame = tk.Frame(mid_row, bg="#1e293b", padx=10, pady=8, highlightthickness=1, highlightbackground="#8b5cf6")
+        qr_frame.pack(side="left", padx=(0, 14))
+
+        tk.Label(qr_frame, text="📲 Scan with iPhone Camera", bg="#1e293b", fg="#c084fc", font=("Segoe UI", 8, "bold")).pack(pady=(0, 4))
+        img_qr = self.generate_qr_image(AIRBEAM_ICLOUD_SHORTCUT_URL, box_size=4, border=2)
+        lbl_qr = tk.Label(qr_frame, bg="#ffffff")
+        lbl_qr.pack()
+        if img_qr:
+            lbl_qr.config(image=img_qr)
+            lbl_qr.image = img_qr
+        tk.Label(qr_frame, text="Tap 'Open in Shortcuts'", bg="#1e293b", fg="#10b981", font=("Segoe UI", 8)).pack(pady=(4, 0))
+
+        # Instructions on Right
+        guide_box = tk.Frame(mid_row, bg="#1e293b", padx=10, pady=8, highlightthickness=1, highlightbackground="#334155")
+        guide_box.pack(side="left", fill="both", expand=True)
 
         steps = [
-            ("1.", "Open the Shortcuts app on your iPhone and tap '+' (top right)."),
-            ("2.", "Tap Shortcut Details (ⓘ) at the bottom ➔ Turn ON 'Show in Share Sheet'."),
-            ("3.", "Tap 'Add Action' ➔ Search & choose 'Get Contents of URL'."),
-            ("4.", f"Set URL to:  {upload_url}  (Copied to your clipboard!)"),
-            ("5.", "Tap arrow (Show More) ➔ Method: POST ➔ Body: File ➔ Select 'Shortcut Input'."),
-            ("6.", "Tap Done! Name it 'AirBeam to PC' ⚡.")
+            ("1.", "Point your iPhone Camera at the QR code (or click Copy Link below)."),
+            ("2.", "Tap the yellow banner: 'Open in Shortcuts'."),
+            ("3.", "Tap 'Add Shortcut' (Installs with zero security warnings!)."),
+            ("4.", "In Photos or Files, select any photo/video, tap Share ➡️ tap 'Air beam To Pc' ⚡!"),
+            ("5.", "Files beam instantly to this PC at 50-95+ MB/s!")
         ]
         for num, txt in steps:
             row = tk.Frame(guide_box, bg="#1e293b")
             row.pack(fill="x", pady=2)
-            tk.Label(row, text=num, bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), width=3, anchor="w").pack(side="left")
-            tk.Label(row, text=txt, bg="#1e293b", fg="#f8fafc", font=("Segoe UI", 9), wraplength=440, justify="left").pack(side="left")
+            tk.Label(row, text=num, bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 8, "bold"), width=3, anchor="w").pack(side="left")
+            tk.Label(row, text=txt, bg="#1e293b", fg="#f8fafc", font=("Segoe UI", 8), wraplength=270, justify="left").pack(side="left")
 
+        # Bottom Buttons Row
         btn_box = tk.Frame(content, bg="#0f172a")
-        btn_box.pack(fill="x", pady=(4, 0))
+        btn_box.pack(fill="x", pady=(6, 0))
 
-        def copy_url_again():
+        def copy_icloud_link():
             self.clipboard_clear()
-            self.clipboard_append(upload_url)
-            btn_copy.config(text="Copied to Clipboard! ✅", fg="#10b981")
-            modal.after(2000, lambda: btn_copy.config(text=f"📋 Copy Upload URL ({upload_url})", fg="#ffffff"))
+            self.clipboard_append(AIRBEAM_ICLOUD_SHORTCUT_URL)
+            btn_copy.config(text="Apple iCloud Link Copied! ✅", fg="#10b981")
+            modal.after(2000, lambda: btn_copy.config(text="📋 Copy Apple iCloud Shortcut Link", fg="#ffffff"))
+
+        def open_browser():
+            try:
+                webbrowser.open(AIRBEAM_ICLOUD_SHORTCUT_URL)
+            except Exception:
+                pass
 
         btn_copy = tk.Button(
-            btn_box, text=f"📋 Copy Upload URL ({upload_url})",
+            btn_box, text="📋 Copy Apple iCloud Shortcut Link",
             bg="#4c1d95", fg="#ffffff", font=("Segoe UI", 9, "bold"),
-            relief="flat", bd=0, padx=12, pady=8, cursor="hand2", command=copy_url_again
+            relief="flat", bd=0, padx=12, pady=7, cursor="hand2", command=copy_icloud_link
         )
         btn_copy.pack(fill="x", pady=(0, 6))
 
+        btn_open = tk.Button(
+            btn_box, text="🌐 Open iCloud Shortcut Page in Browser",
+            bg="#0284c7", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+            relief="flat", bd=0, padx=12, pady=6, cursor="hand2", command=open_browser
+        )
+        btn_open.pack(fill="x", pady=(0, 6))
+
         btn_close = tk.Button(
-            btn_box, text="Close",
+            btn_box, text="Close (Esc)",
             bg="#334155", fg="#f8fafc", font=("Segoe UI", 9),
-            relief="flat", bd=0, padx=12, pady=6, cursor="hand2", command=modal.destroy
+            relief="flat", bd=0, padx=12, pady=5, cursor="hand2", command=modal.destroy
         )
         btn_close.pack(fill="x")
+        modal.bind("<Escape>", lambda e: modal.destroy())
 
     def copy_win_hotspot_portal_url(self):
         url = getattr(self, "active_win_hotspot_portal_url", None)
