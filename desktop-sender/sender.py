@@ -1012,18 +1012,33 @@ def get_connected_hotspot_client_ips():
     return ips
 
 def find_hotspot_device_ip():
-    """Finds the tablet's IP on 192.168.43.1 (tablet-hosted hotspot) or 192.168.137.x (Windows hotspot)."""
-    # 0. Check preferred tablet IP (10.150.131.50) and standard gateway (192.168.43.1)
-    for tip in ("10.150.131.50", "192.168.43.1"):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.20)
-            if s.connect_ex((tip, NIO_PORT)) == 0:
+    """Finds the tablet's IP on dynamic Wi-Fi gateway, 192.168.43.1, or 192.168.137.x."""
+    # 0. Proactively probe candidate hotspot targets across ports 7777 and 8080
+    probe_candidates = []
+    gw = get_wifi_gateway_ip()
+    if gw and gw not in probe_candidates:
+        probe_candidates.append(gw)
+    for ip in ("192.168.43.1", "10.150.131.50"):
+        if ip not in probe_candidates:
+            probe_candidates.append(ip)
+    try:
+        mdns = socket.gethostbyname("airbeam.local")
+        if mdns and mdns not in probe_candidates:
+            probe_candidates.append(mdns)
+    except Exception:
+        pass
+
+    for tip in probe_candidates:
+        for port in (NIO_PORT, 8080):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.25)
+                if s.connect_ex((tip, port)) == 0:
+                    s.close()
+                    return tip
                 s.close()
-                return tip
-            s.close()
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     # 1. First probe any IPs in Windows ARP table for 192.168.137.x
     clients = get_connected_hotspot_client_ips()
@@ -1344,6 +1359,26 @@ def get_best_home_wifi_profile(app_instance=None) -> Optional[str]:
 
 def get_wifi_gateway_ip():
     """Queries the default gateway IP on the Wi-Fi interface (tablet DHCP gateway)."""
+    # 1. Fast ipconfig parse (~10-15ms)
+    try:
+        out = subprocess.check_output('ipconfig', text=True, stderr=subprocess.DEVNULL)
+        wifi_block = False
+        for line in out.splitlines():
+            lower = line.lower()
+            if 'wireless' in lower or 'wi-fi' in lower:
+                wifi_block = True
+            elif wifi_block and 'adapter' in lower and 'wi-fi' not in lower and 'wireless' not in lower:
+                wifi_block = False
+            elif wifi_block and 'default gateway' in lower:
+                m = re.search(r'default gateway[ .:]+([0-9\.]+)', line, re.IGNORECASE)
+                if m:
+                    gw = m.group(1).strip()
+                    if gw and gw != '0.0.0.0' and len(gw.split('.')) == 4:
+                        return gw
+    except Exception:
+        pass
+
+    # 2. PowerShell fallback
     try:
         cmd = ["powershell", "-NoProfile", "-Command",
                "(Get-NetIPConfiguration -InterfaceAlias 'Wi-Fi*').IPv4DefaultGateway.NextHop"]
@@ -2254,6 +2289,32 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         </a>
     </div>
 
+    <!-- ⚡ Live Active Transfer Card with STOP / RESUME and CANCEL -->
+    <div id="liveTransferCard" class="card" style="display:none;border:1.5px solid #38BDF8;background:linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.95) 100%);box-shadow:0 8px 24px rgba(56,189,248,0.2);">
+        <div class="card-title" style="margin-bottom:8px;">
+            <span style="color:#38BDF8;display:flex;align-items:center;gap:8px;">
+                <span class="pulse-dot"></span> ⚡ Live Active Transfer
+            </span>
+            <span id="liveTransferPercent" class="badge" style="background:rgba(56,189,248,0.2);color:#38BDF8;font-size:13px;font-weight:700;">0%</span>
+        </div>
+        <div id="liveTransferFilename" style="font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px;color:#F8FAFC;">Active Transfer</div>
+        <div class="progress-bar-bg" style="height:10px;border-radius:5px;background:#334155;overflow:hidden;">
+            <div id="liveTransferFill" class="progress-bar-fill" style="width:0%;height:100%;background:linear-gradient(90deg,#38BDF8,#818CF8);transition:width 0.2s ease;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-top:6px;">
+            <span id="liveTransferBytes">0 MB / 0 MB</span>
+            <span id="liveTransferSpeed">⚡ 0.0 MB/s</span>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:14px;">
+            <button id="btnLiveTransferStop" onclick="toggleServerTransfer()" class="btn" style="flex:1;padding:12px;font-size:14px;font-weight:700;background:#F59E0B;color:#fff;border-radius:10px;margin-bottom:0;cursor:pointer;">
+                ⏹️ Stop
+            </button>
+            <button id="btnLiveTransferCancel" onclick="cancelServerTransfer()" class="btn" style="flex:1;padding:12px;font-size:14px;font-weight:700;background:#EF4444;color:#fff;border-radius:10px;margin-bottom:0;cursor:pointer;">
+                ❌ Cancel
+            </button>
+        </div>
+    </div>
+
     <!-- 1. Download Files from PC Card -->
     <div class="card">
         <div class="card-title">
@@ -2286,8 +2347,8 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <span id="uploadPercent">0%</span>
             </div>
             <div style="display:flex;gap:10px;margin-top:12px;">
-                <button id="btnUploadPauseResume" onclick="toggleUploadPauseResume()" class="btn" style="flex:1;padding:8px;font-size:12px;background:#F59E0B;color:#fff;border-radius:8px;margin-bottom:0;">⏸️ Pause</button>
-                <button id="btnUploadCancel" onclick="cancelUpload()" class="btn" style="flex:1;padding:8px;font-size:12px;background:#EF4444;color:#fff;border-radius:8px;margin-bottom:0;">❌ Cancel</button>
+                <button id="btnUploadPauseResume" onclick="toggleUploadPauseResume()" class="btn" style="flex:1;padding:12px;font-size:14px;font-weight:700;background:#F59E0B;color:#fff;border-radius:10px;margin-bottom:0;">⏹️ Stop</button>
+                <button id="btnUploadCancel" onclick="cancelUpload()" class="btn" style="flex:1;padding:12px;font-size:14px;font-weight:700;background:#EF4444;color:#fff;border-radius:10px;margin-bottom:0;">❌ Cancel</button>
             </div>
         </div>
 
@@ -2548,10 +2609,10 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const speedEl = document.getElementById('uploadSpeed');
             if (isUploadPaused) {
                 if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }
-                if (speedEl) speedEl.innerText = '⏸️ Paused';
-                showToast('⏸️ Upload paused');
+                if (speedEl) speedEl.innerText = '⏹️ Stopped';
+                showToast('⏹️ Upload stopped');
             } else {
-                if (btn) { btn.innerText = '⏸️ Pause'; btn.style.background = '#F59E0B'; }
+                if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }
                 showToast('▶️ Upload resumed');
             }
         }
@@ -2589,7 +2650,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const btnPause = document.getElementById('btnUploadPauseResume');
 
             if (btnPause) {
-                btnPause.innerText = '⏸️ Pause';
+                btnPause.innerText = '⏹️ Stop';
                 btnPause.style.background = '#F59E0B';
             }
             progressBox.style.display = 'block';
@@ -2739,13 +2800,69 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             });
         }
 
+        async function checkServerTransferStatus() {
+            try {
+                const res = await fetch('/api/transfer/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                const card = document.getElementById('liveTransferCard');
+                if (!card) return;
+                if (data.active) {
+                    card.style.display = 'block';
+                    document.getElementById('liveTransferFilename').innerText = data.filename || 'Active Transfer';
+                    document.getElementById('liveTransferPercent').innerText = (data.percent || 0) + '%';
+                    document.getElementById('liveTransferFill').style.width = (data.percent || 0) + '%';
+                    const mbDone = ((data.transferred || 0) / (1024 * 1024)).toFixed(1);
+                    const mbTotal = ((data.total || 0) / (1024 * 1024)).toFixed(1);
+                    document.getElementById('liveTransferBytes').innerText = mbDone + ' MB / ' + mbTotal + ' MB';
+                    const speed = (data.speed_mbps || 0).toFixed(1);
+                    const btnStop = document.getElementById('btnLiveTransferStop');
+                    if (data.is_paused) {
+                        document.getElementById('liveTransferSpeed').innerText = '⏹️ Stopped';
+                        if (btnStop) { btnStop.innerText = '▶️ Resume'; btnStop.style.background = '#10B981'; }
+                    } else {
+                        document.getElementById('liveTransferSpeed').innerText = '⚡ ' + speed + ' MB/s';
+                        if (btnStop) { btnStop.innerText = '⏹️ Stop'; btnStop.style.background = '#F59E0B'; }
+                    }
+                } else {
+                    card.style.display = 'none';
+                }
+            } catch (e) {}
+        }
+
+        async function toggleServerTransfer() {
+            try {
+                const res = await fetch('/api/transfer/toggle_pause', { method: 'POST' });
+                const data = await res.json();
+                const btn = document.getElementById('btnLiveTransferStop');
+                if (data.is_paused) {
+                    if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }
+                    showToast('⏹️ Transfer stopped');
+                } else {
+                    if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }
+                    showToast('▶️ Transfer resumed');
+                }
+            } catch (e) { showToast('Action failed'); }
+        }
+
+        async function cancelServerTransfer() {
+            try {
+                await fetch('/api/transfer/cancel', { method: 'POST' });
+                const card = document.getElementById('liveTransferCard');
+                if (card) card.style.display = 'none';
+                showToast('❌ Transfer cancelled');
+            } catch (e) { showToast('Cancel failed'); }
+        }
+
         // Poll files & clipboard every 3.5s
         fetchFiles();
         fetchClipboard();
+        checkServerTransferStatus();
         setInterval(() => {
             fetchFiles();
             fetchClipboard();
         }, 3500);
+        setInterval(checkServerTransferStatus, 1000);
     </script>
 </body>
 </html>
@@ -2833,6 +2950,55 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 "mdns": "airbeam.local",
                 "port": srv_port
             }).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(resp)
+            return
+
+        elif clean_path == '/api/transfer/status':
+            is_active = getattr(self.app, "is_sending", False)
+            is_paused = not self.app.pause_event.is_set() if hasattr(self.app, "pause_event") else False
+            transferred = getattr(self.app, "last_transferred_bytes", 0)
+            total = getattr(self.app, "total_transfer_bytes", 0)
+            cur_file = getattr(self.app, "current_sending_file", "Transferring...")
+            pct = int((transferred / total) * 100) if total > 0 else 0
+            resp = json.dumps({
+                "active": is_active,
+                "filename": os.path.basename(cur_file) if cur_file else "Active Transfer",
+                "transferred": transferred,
+                "total": total,
+                "percent": pct,
+                "speed_mbps": getattr(self.app, "current_speed_mbps", 0.0),
+                "is_paused": is_paused
+            }).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(resp)
+            return
+
+        elif clean_path in ('/api/transfer/toggle_pause', '/api/transfer/pause', '/api/transfer/stop'):
+            if hasattr(self.app, "toggle_pause"):
+                self.app.after(0, self.app.toggle_pause)
+            is_paused = not self.app.pause_event.is_set() if hasattr(self.app, "pause_event") else False
+            resp = json.dumps({"status": "ok", "is_paused": not is_paused}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(resp)
+            return
+
+        elif clean_path == '/api/transfer/cancel':
+            if hasattr(self.app, "cancel_transfer"):
+                self.app.after(0, self.app.cancel_transfer)
+            resp = json.dumps({"status": "ok", "cancelled": True}).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(resp)))
@@ -3063,6 +3229,31 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         clean_path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
+
+        if clean_path in ('/api/transfer/toggle_pause', '/api/transfer/pause', '/api/transfer/stop'):
+            if hasattr(self.app, "toggle_pause"):
+                self.app.after(0, self.app.toggle_pause)
+            is_paused = not self.app.pause_event.is_set() if hasattr(self.app, "pause_event") else False
+            resp = json.dumps({"status": "ok", "is_paused": not is_paused}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(resp)
+            return
+
+        elif clean_path == '/api/transfer/cancel':
+            if hasattr(self.app, "cancel_transfer"):
+                self.app.after(0, self.app.cancel_transfer)
+            resp = json.dumps({"status": "ok", "cancelled": True}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(resp)
+            return
 
         if clean_path == '/upload':
             if query.get('action', [''])[0] == 'cancel':
@@ -5366,53 +5557,58 @@ class AirBeamSenderApp(BaseTkApp):
         )
         def bg():
             connect_windows_to_airbeam(app_instance=self)
-            # Allow time for DHCP lease assignment
-            time.sleep(1.5)
-            gateway_ip = get_wifi_gateway_ip()
-            active_target = gateway_ip if gateway_ip else "10.150.131.50"
-            if gateway_ip:
-                self.after(0, lambda g=gateway_ip: (
-                    self.entry_ip.delete(0, tk.END),
-                    self.entry_ip.insert(0, g),
-                    self.lbl_device_status.config(
-                        text=f"Detected Tablet Gateway IP: {g}",
-                        style="StatusPending.TLabel"
-                    )
-                ))
+            connected_ip = None
 
-            # Probe candidate IPs
-            probe_ips = [active_target]
-            if "10.150.131.50" not in probe_ips:
-                probe_ips.append("10.150.131.50")
-            if "192.168.43.1" not in probe_ips:
-                probe_ips.append("192.168.43.1")
-
-            for _ in range(10):
+            for _ in range(16):
                 time.sleep(0.5)
-                for tip in probe_ips:
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(0.3)
-                        if s.connect_ex((tip, NIO_PORT)) == 0:
+                gw = get_wifi_gateway_ip()
+                probe_candidates = []
+                if gw and gw not in probe_candidates:
+                    probe_candidates.append(gw)
+                for tip in ("192.168.43.1", "10.150.131.50"):
+                    if tip not in probe_candidates:
+                        probe_candidates.append(tip)
+                try:
+                    mdns = socket.gethostbyname("airbeam.local")
+                    if mdns and mdns not in probe_candidates:
+                        probe_candidates.append(mdns)
+                except Exception:
+                    pass
+
+                for tip in probe_candidates:
+                    for port in (NIO_PORT, 8080):
+                        try:
+                            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            s.settimeout(0.3)
+                            if s.connect_ex((tip, port)) == 0:
+                                s.close()
+                                connected_ip = tip
+                                break
                             s.close()
-                            self.after(0, lambda t=tip: (
-                                self.entry_ip.delete(0, tk.END),
-                                self.entry_ip.insert(0, t),
-                                self.on_tablet_hotspot_ready("samsung SM-T505N", t),
-                                self.hotspot_switch.set_state(True, trigger_callback=False),
-                                self.lbl_hotspot_toggle_state.config(text="ON (Connected)", fg="#10b981")
-                            ))
-                            return
-                        s.close()
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
+                    if connected_ip:
+                        break
+                if connected_ip:
+                    break
+
+            if connected_ip:
+                self.after(0, lambda t=connected_ip: (
+                    self.entry_ip.delete(0, tk.END),
+                    self.entry_ip.insert(0, t),
+                    self.on_tablet_hotspot_ready("samsung SM-T505N", t),
+                    self.hotspot_switch.set_state(True, trigger_callback=False),
+                    self.lbl_hotspot_toggle_state.config(text="ON (Connected)", fg="#10b981")
+                ))
+                return
+
             cur = get_current_wifi_connection()
             if cur and cur.lower() == "airbeam":
-                self.after(0, lambda: (
-                    self.lbl_device_status.config(
-                        text=f"📶 Connected to 'airbeam' ({active_target}). Ready to beam!",
-                        style="StatusSuccess.TLabel"
-                    ),
+                fallback_target = get_wifi_gateway_ip() or "192.168.43.1"
+                self.after(0, lambda ft=fallback_target: (
+                    self.entry_ip.delete(0, tk.END),
+                    self.entry_ip.insert(0, ft),
+                    self.on_tablet_hotspot_ready("samsung SM-T505N", ft),
                     self.hotspot_switch.set_state(True, trigger_callback=False),
                     self.lbl_hotspot_toggle_state.config(text="ON (Connected)", fg="#10b981")
                 ))
@@ -8653,6 +8849,9 @@ class AirBeamSenderApp(BaseTkApp):
                 self.tablet_router_ip = ip
                 self.negotiate_hotspot_bypass(preferred_band="5GHz")
         elif mode == "TABLET_HOTSPOT":
+            cur_wifi = get_current_wifi_connection()
+            if (cur_wifi and cur_wifi.lower() == "airbeam") or getattr(self, "connected_to_airbeam", False) or self.hotspot_state == "CONNECTED":
+                return
             # Tablet is on router, but user chose Tablet Hotspot! Do NOT start laptop hotspot!
             current = self.entry_ip.get().strip()
             if not current or current.startswith("Searching"):
@@ -8755,41 +8954,115 @@ class AirBeamSenderApp(BaseTkApp):
             style="StatusHotspot.TLabel"
         )
 
+    def _on_ping_success(self, ip, port, rtt, is_on_airbeam=False):
+        self.entry_ip.delete(0, tk.END)
+        self.entry_ip.insert(0, ip)
+        if is_on_airbeam or ip.startswith("192.168.43.") or ip.startswith("10.150."):
+            self.on_tablet_hotspot_ready("samsung SM-T505N", ip)
+            try:
+                self.hotspot_switch.set_state(True, trigger_callback=False)
+                self.lbl_hotspot_toggle_state.config(text="ON (Connected)", fg="#10b981")
+            except Exception:
+                pass
+        elif ip.startswith("192.168.137."):
+            self.on_hotspot_ready("samsung SM-T505N", ip)
+        else:
+            self.lbl_device_status.config(
+                text=f"Connected to {ip} (Wi-Fi, {rtt:.1f}ms) — Ready!",
+                style="StatusSuccess.TLabel"
+            )
+        messagebox.showinfo("Success", f"Connected to {ip}:{port}!\nPing: {rtt:.1f} ms\nHigh-speed transfer ready!")
+
     def ping_target(self):
         target = self.entry_ip.get().strip()
         mode = self.connection_mode.get()
 
         def worker():
-            # Check current target first if specified
-            if target and not target.startswith("Searching"):
-                try:
-                    t0 = time.time()
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.2)
-                    s.connect((target, NIO_PORT))
-                    s.close()
-                    rtt = (time.time() - t0) * 1000
-                    if target.startswith("192.168.43."):
-                        self.after(0, lambda: self.on_tablet_hotspot_ready("samsung SM-T505N", target))
-                    elif target.startswith("192.168.137."):
-                        self.after(0, lambda: self.on_hotspot_ready("samsung SM-T505N", target))
-                    else:
-                        self.after(0, lambda: self.lbl_device_status.config(
-                            text=f"Connected to {target} (Home Wi-Fi, {rtt:.1f}ms) — Ready!",
-                            style="StatusSuccess.TLabel"
-                        ))
-                    self.after(0, lambda: messagebox.showinfo("Success", f"Connected to {target}:7777!\nPing: {rtt:.1f} ms\nHigh-speed transfer ready!"))
-                    return
-                except Exception:
-                    pass
+            cur_wifi = get_current_wifi_connection()
+            is_on_airbeam = (cur_wifi and cur_wifi.lower() == "airbeam") or getattr(self, "connected_to_airbeam", False) or (mode == "TABLET_HOTSPOT")
 
-            if mode == "TABLET_HOTSPOT":
+            # Collect candidates in priority order
+            candidates = []
+            gw = get_wifi_gateway_ip()
+            if gw and gw not in candidates:
+                candidates.append(gw)
+            if "192.168.43.1" not in candidates:
+                candidates.append("192.168.43.1")
+            try:
+                mdns = socket.gethostbyname("airbeam.local")
+                if mdns and mdns not in candidates:
+                    candidates.append(mdns)
+            except Exception:
+                pass
+            if "10.150.131.50" not in candidates:
+                candidates.append("10.150.131.50")
+
+            if target and not target.startswith("Searching"):
+                if is_on_airbeam and target.startswith("192.168.1."):
+                    candidates.append(target)
+                else:
+                    candidates.insert(0, target)
+
+            found_ip = None
+            found_port = None
+            found_rtt = 0.0
+
+            for cand in candidates:
+                for port in (NIO_PORT, 8080):
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.settimeout(0.4)
+                        t0 = time.time()
+                        if s.connect_ex((cand, port)) == 0:
+                            found_rtt = (time.time() - t0) * 1000
+                            found_ip = cand
+                            found_port = port
+                            s.close()
+                            break
+                        s.close()
+                    except Exception:
+                        pass
+                if found_ip:
+                    break
+
+            if found_ip:
+                self.after(0, lambda ip=found_ip, p=found_port, rtt=found_rtt: self._on_ping_success(ip, p, rtt, is_on_airbeam))
+                return
+
+            # Broadcast discovery on UDP
+            try:
+                ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                ds.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                ds.sendto(b"AIRBEAM_DISCOVER", ("255.255.255.255", UDP_PORT))
+                ds.sendto(b"AIRBEAM_DISCOVER", ("192.168.43.255", UDP_PORT))
+                ds.close()
+            except Exception:
+                pass
+
+            time.sleep(0.3)
+            gw2 = get_wifi_gateway_ip()
+            if gw2:
+                for p in (NIO_PORT, 8080):
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.settimeout(0.4)
+                        t0 = time.time()
+                        if s.connect_ex((gw2, p)) == 0:
+                            rtt = (time.time() - t0) * 1000
+                            s.close()
+                            self.after(0, lambda ip=gw2, port=p, r=rtt: self._on_ping_success(ip, port, r, is_on_airbeam))
+                            return
+                        s.close()
+                    except Exception:
+                        pass
+
+            if mode == "TABLET_HOTSPOT" or is_on_airbeam:
                 self.after(0, lambda: messagebox.showerror(
                     "Tablet Hotspot Not Reachable",
-                    f"Could not connect to {target or '10.150.131.50'}:7777.\n\n"
+                    f"Could not connect to tablet at {target or '192.168.43.1'}.\n\n"
                     "Please check:\n"
                     "1. Is Mobile Hotspot turned ON on your Samsung tablet (5 GHz preferred)?\n"
-                    "2. Is your PC Wi-Fi connected to your tablet's hotspot network?\n"
+                    "2. Is your PC Wi-Fi connected to 'airbeam'?\n"
                     "3. Is the AirBeam Receiver app open on your tablet screen?"
                 ))
             elif mode == "LAPTOP_HOTSPOT":

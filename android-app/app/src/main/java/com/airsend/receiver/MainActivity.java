@@ -211,10 +211,10 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                     if (paused) {
                         btnActivePauseResume.setText("▶️ Resume");
                         btnActivePauseResume.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF10B981));
-                        if (tvActiveSpeed != null) tvActiveSpeed.setText("⏸️ Paused");
-                        Toast.makeText(this, "Transfer paused", Toast.LENGTH_SHORT).show();
+                        if (tvActiveSpeed != null) tvActiveSpeed.setText("⏹️ Stopped");
+                        Toast.makeText(this, "Transfer stopped", Toast.LENGTH_SHORT).show();
                     } else {
-                        btnActivePauseResume.setText("⏸️ Pause");
+                        btnActivePauseResume.setText("⏹️ Stop");
                         btnActivePauseResume.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFF59E0B));
                         Toast.makeText(this, "Transfer resumed", Toast.LENGTH_SHORT).show();
                     }
@@ -519,7 +519,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
             if (cardActiveTransfer != null) {
                 cardActiveTransfer.setVisibility(View.VISIBLE);
                 if (btnActivePauseResume != null) {
-                    btnActivePauseResume.setText("⏸️ Pause");
+                    btnActivePauseResume.setText("⏹️ Stop");
                     btnActivePauseResume.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFF59E0B));
                 }
                 tvActiveFileName.setText(item.getFileName());

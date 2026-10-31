@@ -101,6 +101,11 @@ public class FileServerService extends Service {
     private final Object transferPauseLock = new Object();
     private volatile Socket currentHttpUploadSocket = null;
     private volatile File currentHttpUploadTargetFile = null;
+    private final AtomicBoolean isTransferActive = new AtomicBoolean(false);
+    private volatile String activeTransferName = "";
+    private final AtomicLong activeTransferTotal = new AtomicLong(0);
+    private final AtomicLong activeTransferDone = new AtomicLong(0);
+    private volatile double activeTransferSpeedMBps = 0.0;
 
     public boolean isTransferPaused() {
         return isTransferPaused.get();
@@ -149,6 +154,8 @@ public class FileServerService extends Service {
             try { currentHttpUploadTargetFile.delete(); } catch (Exception ignored) {}
         }
 
+        isTransferActive.set(false);
+        activeTransferSpeedMBps = 0.0;
         releaseWakeAndWifiLocks();
         updateNotification("AirBeam V2", "Transfer cancelled");
     }
@@ -1058,6 +1065,50 @@ public class FileServerService extends Service {
                     handleDownload(uri, headers, out);
                 } else if (uri.startsWith("/api/clipboard")) {
                     handleGetClipboard(out);
+                } else if (uri.startsWith("/api/transfer/status")) {
+                    JSONObject status = new JSONObject();
+                    boolean active = isTransferActive.get() || !activeSessions.isEmpty();
+                    status.put("active", active);
+                    status.put("is_paused", isTransferPaused.get());
+                    if (active) {
+                        String name = activeTransferName;
+                        long total = activeTransferTotal.get();
+                        long done = activeTransferDone.get();
+                        double speed = activeTransferSpeedMBps;
+                        if (!activeSessions.isEmpty()) {
+                            ActiveTransferSession s = activeSessions.values().iterator().next();
+                            if (s != null) {
+                                if (s.transferItem != null && s.transferItem.getFileName() != null) {
+                                    name = s.transferItem.getFileName();
+                                }
+                                total = s.totalBytes;
+                                done = s.transferredBytes.get();
+                                speed = s.speedMBps;
+                            }
+                        }
+                        int pct = total > 0 ? (int) Math.min(100, (done * 100) / total) : 0;
+                        status.put("filename", name != null && !name.isEmpty() ? name : "Active Transfer");
+                        status.put("transferred", done);
+                        status.put("total", total);
+                        status.put("percent", pct);
+                        status.put("speed_mbps", Math.round(speed * 10.0) / 10.0);
+                    }
+                    byte[] body = status.toString().getBytes(StandardCharsets.UTF_8);
+                    sendResponse(out, 200, "OK", "application/json", body);
+                } else if (uri.startsWith("/api/transfer/toggle_pause") || uri.startsWith("/api/transfer/pause") || uri.startsWith("/api/transfer/stop")) {
+                    boolean nowPaused = togglePauseActiveTransfer();
+                    JSONObject res = new JSONObject();
+                    res.put("status", "ok");
+                    res.put("is_paused", nowPaused);
+                    byte[] body = res.toString().getBytes(StandardCharsets.UTF_8);
+                    sendResponse(out, 200, "OK", "application/json", body);
+                } else if (uri.startsWith("/api/transfer/cancel")) {
+                    cancelActiveTransfer();
+                    JSONObject res = new JSONObject();
+                    res.put("status", "ok");
+                    res.put("cancelled", true);
+                    byte[] body = res.toString().getBytes(StandardCharsets.UTF_8);
+                    sendResponse(out, 200, "OK", "application/json", body);
                 } else {
                     String html = WebPortalHtml.getHtml(Build.MANUFACTURER + " " + Build.MODEL, String.valueOf(PORT));
                     byte[] body = html.getBytes(StandardCharsets.UTF_8);
@@ -1067,6 +1118,24 @@ public class FileServerService extends Service {
             }
 
             if ("POST".equalsIgnoreCase(method)) {
+                if (uri.startsWith("/api/transfer/toggle_pause") || uri.startsWith("/api/transfer/pause") || uri.startsWith("/api/transfer/stop")) {
+                    boolean nowPaused = togglePauseActiveTransfer();
+                    JSONObject res = new JSONObject();
+                    res.put("status", "ok");
+                    res.put("is_paused", nowPaused);
+                    byte[] body = res.toString().getBytes(StandardCharsets.UTF_8);
+                    sendResponse(out, 200, "OK", "application/json", body);
+                    return;
+                }
+                if (uri.startsWith("/api/transfer/cancel")) {
+                    cancelActiveTransfer();
+                    JSONObject res = new JSONObject();
+                    res.put("status", "ok");
+                    res.put("cancelled", true);
+                    byte[] body = res.toString().getBytes(StandardCharsets.UTF_8);
+                    sendResponse(out, 200, "OK", "application/json", body);
+                    return;
+                }
                 if (uri.startsWith("/api/clipboard")) {
                     handlePostClipboard(headers, bis, out);
                     return;
@@ -1444,6 +1513,8 @@ public class FileServerService extends Service {
                 }
                 sendResponse(out, 500, "Internal Server Error", "text/plain", e.getMessage().getBytes(StandardCharsets.UTF_8));
             } finally {
+                isTransferActive.set(false);
+                activeTransferSpeedMBps = 0.0;
                 currentHttpUploadTargetFile = null;
                 releaseWakeAndWifiLocks();
             }
@@ -1460,6 +1531,11 @@ public class FileServerService extends Service {
             transferListener.onTransferStart(item);
         }
         updateNotification("Receiving: " + targetFile.getName(), "AirBeam iOS / Web Transfer");
+        isTransferActive.set(true);
+        activeTransferName = targetFile.getName();
+        activeTransferTotal.set(contentLength > 0 ? contentLength : 0);
+        activeTransferDone.set(0);
+        activeTransferSpeedMBps = 0.0;
 
         try (FileOutputStream fos = new FileOutputStream(targetFile);
              BufferedOutputStream bos = new BufferedOutputStream(fos, 1048576)) {
@@ -1492,6 +1568,8 @@ public class FileServerService extends Service {
                         double speed = dt > 0 ? ((bytesReadTotal - lastBytesDone) / (1024.0 * 1024.0)) / (dt / 1000.0) : 0.0;
                         item.setTransferredBytes(bytesReadTotal);
                         item.setSpeedMBps(speed);
+                        activeTransferDone.set(bytesReadTotal);
+                        activeTransferSpeedMBps = speed;
                         if (transferListener != null) transferListener.onTransferProgress(item);
 
                         Intent progIntent = new Intent("com.airbeam.TRANSFER_PROGRESS");
@@ -1525,6 +1603,8 @@ public class FileServerService extends Service {
                         double speed = dt > 0 ? ((bytesReadTotal - lastBytesDone) / (1024.0 * 1024.0)) / (dt / 1000.0) : 0.0;
                         item.setTransferredBytes(bytesReadTotal);
                         item.setSpeedMBps(speed);
+                        activeTransferDone.set(bytesReadTotal);
+                        activeTransferSpeedMBps = speed;
                         if (transferListener != null) transferListener.onTransferProgress(item);
                         lastProgressUpdate = now;
                         lastBytesDone = bytesReadTotal;
@@ -1562,6 +1642,8 @@ public class FileServerService extends Service {
             }
             sendResponse(out, 500, "Internal Server Error", "text/plain", e.getMessage().getBytes(StandardCharsets.UTF_8));
         } finally {
+            isTransferActive.set(false);
+            activeTransferSpeedMBps = 0.0;
             currentHttpUploadTargetFile = null;
             isTransferCancelled.set(false);
             isTransferPaused.set(false);

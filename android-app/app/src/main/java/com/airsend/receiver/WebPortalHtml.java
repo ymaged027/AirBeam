@@ -226,23 +226,44 @@ public class WebPortalHtml {
 "        <div class=\"badge\">● DIRECT 5GHz WI-FI PIPE (50-95+ MB/s)</div>\n" +
 "    </div>\n" +
 "\n" +
-"    <!-- iOS AirDrop Share Sheet Card -->\n" +
-"    <div class=\"card\">\n" +
-"        <div class=\"card-header\">\n" +
-"            <div class=\"card-title\">⚡ iOS AirDrop Share Sheet</div>\n" +
-"            <span class=\"badge\" style=\"margin-top:0;background:rgba(139,92,246,0.18);color:#A78BFA;border-color:rgba(139,92,246,0.3);\">AirDrop Mode</span>\n" +
+"    <!-- ⚡ Live Active Transfer Card with STOP / RESUME and CANCEL -->\n" +
+"    <div id=\"liveTransferCard\" class=\"card\" style=\"display:none;border:1.5px solid #38BDF8;background:linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.95) 100%);box-shadow:0 8px 24px rgba(56,189,248,0.2);\">\n" +
+"        <div class=\"card-header\" style=\"margin-bottom:8px;\">\n" +
+"            <div class=\"card-title\" style=\"color:#38BDF8;display:flex;align-items:center;gap:8px;\">\n" +
+"                <span class=\"pulse-dot\"></span> ⚡ Live Active Transfer\n" +
+"            </div>\n" +
+"            <span id=\"liveTransferPercent\" class=\"badge\" style=\"margin-top:0;background:rgba(56,189,248,0.2);color:#38BDF8;font-size:13px;font-weight:700;\">0%</span>\n" +
 "        </div>\n" +
-"        <p style=\"font-size:13px;color:var(--text-secondary);margin:0 0 14px;\">\n" +
+"        <div id=\"liveTransferFilename\" style=\"font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:8px;color:#F8FAFC;\">Receiving file...</div>\n" +
+"        <div class=\"progress-bar-bg\" style=\"height:10px;border-radius:5px;background:#334155;overflow:hidden;\">\n" +
+"            <div id=\"liveTransferFill\" class=\"progress-bar-fill\" style=\"width:0%;height:100%;background:linear-gradient(90deg,#38BDF8,#818CF8);transition:width 0.2s ease;\"></div>\n" +
+"        </div>\n" +
+"        <div style=\"display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-top:6px;\">\n" +
+"            <span id=\"liveTransferBytes\">0 MB / 0 MB</span>\n" +
+"            <span id=\"liveTransferSpeed\">⚡ 0.0 MB/s</span>\n" +
+"        </div>\n" +
+"        <div style=\"display:flex;gap:10px;margin-top:14px;\">\n" +
+"            <button id=\"btnLiveTransferStop\" onclick=\"toggleServerTransfer()\" class=\"btn\" style=\"flex:1;padding:12px;font-size:14px;font-weight:700;background:#F59E0B;color:#fff;border-radius:10px;margin-bottom:0;cursor:pointer;\">\n" +
+"                ⏹️ Stop\n" +
+"            </button>\n" +
+"            <button id=\"btnLiveTransferCancel\" onclick=\"cancelServerTransfer()\" class=\"btn\" style=\"flex:1;padding:12px;font-size:14px;font-weight:700;background:#EF4444;color:#fff;border-radius:10px;margin-bottom:0;cursor:pointer;\">\n" +
+"                ❌ Cancel\n" +
+"            </button>\n" +
+"        </div>\n" +
+"    </div>\n" +
+"\n" +
+"    <!-- iOS AirDrop Share Sheet Card -->\n" +
+"    <div class=\"card\" style=\"border:1px solid rgba(139,92,246,0.45);background:linear-gradient(180deg, rgba(30,41,59,0.85) 0%, rgba(20,24,45,0.9) 100%);\">\n" +
+"        <div class=\"card-header\">\n" +
+"            <div class=\"card-title\" style=\"display:flex;align-items:center;gap:8px;\"><span>⚡</span><span style=\"color:#C084FC;font-weight:700;\">iOS AirDrop Share Sheet</span></div>\n" +
+"            <span class=\"badge\" style=\"margin-top:0;background:rgba(139,92,246,0.25);color:#C084FC;\">AirDrop Mode</span>\n" +
+"        </div>\n" +
+"        <p style=\"font-size:13px;color:var(--text-secondary);margin:0 0 14px;line-height:1.5;\">\n" +
 "            Beam photos, 4K videos, and files directly from your iPhone's native <b>Share</b> menu without opening Safari every time!\n" +
 "        </p>\n" +
-"        <a href=\"" + ICLOUD_SHORTCUT_URL + "\" class=\"btn btn-shortcut\">⚡ Download iOS Shortcut (1-Click)</a>\n" +
-"        <button id=\"btnCopyEndpoint\" onclick=\"copyUploadEndpoint()\" class=\"btn btn-secondary\">📋 Copy Upload URL</button>\n" +
-"        <div style=\"background:#162032;border-radius:12px;padding:12px;margin-top:12px;font-size:12px;color:#94A3B8;line-height:1.5;\">\n" +
-"            <b>💡 Easy Setup:</b><br>\n" +
-"            1. Tap <b>Download iOS Shortcut</b> above to install with Apple ID signing.<br>\n" +
-"            2. In iPhone <b>Photos</b> or <b>Files</b>, select media & tap <b>Share ➔ AirBeam to PC / Android</b>.<br>\n" +
-"            3. Works seamlessly over Wi-Fi or Hotspot!\n" +
-"        </div>\n" +
+"        <a href=\"" + ICLOUD_SHORTCUT_URL + "\" class=\"btn\" style=\"background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 18px rgba(139,92,246,0.45);font-size:15px;padding:14px 16px;text-align:center;text-decoration:none;display:block;border-radius:12px;\">\n" +
+"            📥 Download AirBeam Shortcut\n" +
+"        </a>\n" +
 "    </div>\n" +
 "\n" +
 "    <!-- Staged Files for iPhone -->\n" +
@@ -280,8 +301,8 @@ public class WebPortalHtml {
 "                <span id=\"uploadSpeed\">⚡ 0.0 MB/s</span>\n" +
 "            </div>\n" +
 "            <div style=\"display:flex;gap:10px;margin-top:12px;\">\n" +
-"                <button id=\"btnUploadPauseResume\" onclick=\"toggleUploadPauseResume()\" class=\"btn\" style=\"flex:1;padding:10px;font-size:13px;background:#F59E0B;color:#fff;border-radius:10px;margin-bottom:0;\">⏸️ Pause</button>\n" +
-"                <button id=\"btnUploadCancel\" onclick=\"cancelUpload()\" class=\"btn\" style=\"flex:1;padding:10px;font-size:13px;background:#EF4444;color:#fff;border-radius:10px;margin-bottom:0;\">❌ Cancel</button>\n" +
+"                <button id=\"btnUploadPauseResume\" onclick=\"toggleUploadPauseResume()\" class=\"btn\" style=\"flex:1;padding:12px;font-size:14px;font-weight:700;background:#F59E0B;color:#fff;border-radius:10px;margin-bottom:0;\">⏹️ Stop</button>\n" +
+"                <button id=\"btnUploadCancel\" onclick=\"cancelUpload()\" class=\"btn\" style=\"flex:1;padding:12px;font-size:14px;font-weight:700;background:#EF4444;color:#fff;border-radius:10px;margin-bottom:0;\">❌ Cancel</button>\n" +
 "            </div>\n" +
 "        </div>\n" +
 "    </div>\n" +
@@ -414,12 +435,66 @@ public class WebPortalHtml {
 "            const speedEl = document.getElementById('uploadSpeed');\n" +
 "            if (isUploadPaused) {\n" +
 "                if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }\n" +
-"                if (speedEl) speedEl.innerText = '⏸️ Paused';\n" +
-"                showToast('⏸️ Upload paused');\n" +
+"                if (speedEl) speedEl.innerText = '⏹️ Stopped';\n" +
+"                showToast('⏹️ Upload stopped');\n" +
 "            } else {\n" +
-"                if (btn) { btn.innerText = '⏸️ Pause'; btn.style.background = '#F59E0B'; }\n" +
+"                if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }\n" +
 "                showToast('▶️ Upload resumed');\n" +
 "            }\n" +
+"        }\n" +
+"\n" +
+"        async function checkServerTransferStatus() {\n" +
+"            try {\n" +
+"                const res = await fetch('/api/transfer/status');\n" +
+"                if (!res.ok) return;\n" +
+"                const data = await res.json();\n" +
+"                const card = document.getElementById('liveTransferCard');\n" +
+"                if (!card) return;\n" +
+"                if (data.active) {\n" +
+"                    card.style.display = 'block';\n" +
+"                    document.getElementById('liveTransferFilename').innerText = data.filename || 'Active Transfer';\n" +
+"                    document.getElementById('liveTransferPercent').innerText = (data.percent || 0) + '%';\n" +
+"                    document.getElementById('liveTransferFill').style.width = (data.percent || 0) + '%';\n" +
+"                    const mbDone = ((data.transferred || 0) / (1024 * 1024)).toFixed(1);\n" +
+"                    const mbTotal = ((data.total || 0) / (1024 * 1024)).toFixed(1);\n" +
+"                    document.getElementById('liveTransferBytes').innerText = mbDone + ' MB / ' + mbTotal + ' MB';\n" +
+"                    const speed = (data.speed_mbps || 0).toFixed(1);\n" +
+"                    const btnStop = document.getElementById('btnLiveTransferStop');\n" +
+"                    if (data.is_paused) {\n" +
+"                        document.getElementById('liveTransferSpeed').innerText = '⏹️ Stopped';\n" +
+"                        if (btnStop) { btnStop.innerText = '▶️ Resume'; btnStop.style.background = '#10B981'; }\n" +
+"                    } else {\n" +
+"                        document.getElementById('liveTransferSpeed').innerText = '⚡ ' + speed + ' MB/s';\n" +
+"                        if (btnStop) { btnStop.innerText = '⏹️ Stop'; btnStop.style.background = '#F59E0B'; }\n" +
+"                    }\n" +
+"                } else {\n" +
+"                    card.style.display = 'none';\n" +
+"                }\n" +
+"            } catch (e) {}\n" +
+"        }\n" +
+"\n" +
+"        async function toggleServerTransfer() {\n" +
+"            try {\n" +
+"                const res = await fetch('/api/transfer/toggle_pause', { method: 'POST' });\n" +
+"                const data = await res.json();\n" +
+"                const btn = document.getElementById('btnLiveTransferStop');\n" +
+"                if (data.is_paused) {\n" +
+"                    if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }\n" +
+"                    showToast('⏹️ Transfer stopped');\n" +
+"                } else {\n" +
+"                    if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }\n" +
+"                    showToast('▶️ Transfer resumed');\n" +
+"                }\n" +
+"            } catch (e) { showToast('Action failed'); }\n" +
+"        }\n" +
+"\n" +
+"        async function cancelServerTransfer() {\n" +
+"            try {\n" +
+"                await fetch('/api/transfer/cancel', { method: 'POST' });\n" +
+"                const card = document.getElementById('liveTransferCard');\n" +
+"                if (card) card.style.display = 'none';\n" +
+"                showToast('❌ Transfer cancelled');\n" +
+"            } catch (e) { showToast('Cancel failed'); }\n" +
 "        }\n" +
 "\n" +
 "        async function cancelUpload() {\n" +
@@ -456,7 +531,7 @@ public class WebPortalHtml {
 "            const btnPause = document.getElementById('btnUploadPauseResume');\n" +
 "\n" +
 "            if (btnPause) {\n" +
-"                btnPause.innerText = '⏸️ Pause';\n" +
+"                btnPause.innerText = '⏹️ Stop';\n" +
 "                btnPause.style.background = '#F59E0B';\n" +
 "            }\n" +
 "            progressBox.style.display = 'block';\n" +
@@ -547,8 +622,10 @@ public class WebPortalHtml {
 "        }\n" +
 "        fetchFiles();\n" +
 "        fetchClipboard();\n" +
+"        checkServerTransferStatus();\n" +
 "        setInterval(fetchFiles, 3000);\n" +
 "        setInterval(fetchClipboard, 5000);\n" +
+"        setInterval(checkServerTransferStatus, 1000);\n" +
 "    </script>\n" +
 "</body>\n" +
 "</html>";

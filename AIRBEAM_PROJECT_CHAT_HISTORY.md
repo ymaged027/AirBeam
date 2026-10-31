@@ -1752,3 +1752,37 @@ x_tools_card.
    - **Production Release APK Rebuilt**:
      * Rebuilt signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease`).
      * Updated `release/AirBeam-v6.0-Receiver.apk`, `release/AirBeam-Receiver.apk`, and `release/AirBeam-v5.0-Receiver.apk`.
+
+13. **Dynamic Hotspot Ping Auto-Discovery & Live Web Portal Stop/Cancel Engine**:
+   - **Hotspot Ping & Auto-Discovery Overhaul in Desktop Sender (`desktop-sender/sender.py`)**:
+     * **Root Cause Fixed**: When connected to the tablet's `airbeam` 5 GHz hotspot, clicking "Ping / Connect" previously failed with `"Could not connect to 192.168.1.12:7777"` because `self.entry_ip` was retaining the stale home router IP, and `ping_target` only probed that single IP without trying hotspot fallbacks. Furthermore, router UDP packets were clobbering the status label.
+     * **Multi-Tier Dynamic Candidate Probing**:
+       - `ping_target` now checks whether the PC is connected to `airbeam` or in `TABLET_HOTSPOT` mode.
+       - Gathers a prioritized candidate list: Dynamic Wi-Fi gateway (`get_wifi_gateway_ip()`), `192.168.43.1` (Android hotspot default), `airbeam.local` (mDNS), `10.150.131.50`, and current entry IP.
+       - Probes candidate IPs across BOTH port 7777 (TCP NIO Multi-Stream) and port 8080 (HTTP Web Portal).
+       - On success: Automatically updates `self.entry_ip`, switches state to `CONNECTED`, calls `on_tablet_hotspot_ready`, updates the hotspot toggle switch to green "ON (Connected)", and reports ping round-trip time (ms).
+       - If candidates don't respond immediately: Dispatches a UDP discovery broadcast (`AIRBEAM_DISCOVER`) on port 7778 to wake up the service, re-checks the gateway, and only displays an error if all fallback probes fail.
+     * **High-Speed Gateway Detection**:
+       - Optimized `get_wifi_gateway_ip()` with a fast `ipconfig` parsing path that extracts the Wi-Fi default gateway in ~10-15 ms (100x faster than spawning PowerShell), with PowerShell fallback.
+     * **Robust Hotspot Switch Integration**:
+       - `connect_to_airbeam_hotspot_action` now polls for the DHCP gateway IP over 16 iterations (8 seconds) instead of a single 1.5s check. Automatically selects the active gateway, updates `self.entry_ip`, and marks the switch as Connected.
+       - `on_router_discovered` now detects if the PC is currently connected to `airbeam` and suppresses stale home-router messages so the active hotspot state is never overwritten.
+   - **Android Web Portal Stop / Resume & Cancel Controls (`WebPortalHtml.java` & `FileServerService.java`)**:
+     * **Dedicated "Live Active Transfer" Card**:
+       - Added a prominent top-level **⚡ Live Active Transfer** card with a live pulsating status indicator, real-time filename display, animated progress bar, MB transferred vs total, and live speed meter (MB/s).
+       - Features prominent **`[ ⏹️ Stop ]` / `[ ▶️ Resume ]`** and **`[ ❌ Cancel ]`** buttons visible from Safari, Chrome, or any mobile/desktop browser.
+       - Polls `/api/transfer/status` every 1s and displays the card whenever an HTTP upload (Safari or iOS Shortcut) or PC NIO socket transfer (port 7777) is running.
+     * **Direct Server-Side Transfer Control Endpoints**:
+       - Implemented `/api/transfer/status` (GET): returns JSON with `active`, `filename`, `transferred`, `total`, `percent`, `speed_mbps`, and `is_paused`.
+       - Implemented `/api/transfer/toggle_pause` (GET/POST): toggles pause on the active transfer server-side; buttons dynamically update to **`[ ▶️ Resume ]`** (green) and **`[ ⏹️ Stop ]`** (amber).
+       - Implemented `/api/transfer/cancel` (GET/POST): cancels the active transfer, purges partial files, and hides the card.
+     * **Explicit Stop Buttons in Dropzone & Android APK**:
+       - Renamed the upload progress button from "Pause" to explicit **`[ ⏹️ Stop ]`** with bold styling and responsive toggle states on both the Web Portal and the Android APK (`activity_main.xml` and `MainActivity.java`).
+     * **Clean iOS AirDrop Share Sheet Card**:
+       - Cleaned up the iOS card to contain exclusively the 1-Click button linking to the official Apple-signed iCloud Shortcut (`https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62`), removing redundant text instructions as requested.
+   - **Desktop Sender Web Portal Parity (`desktop-sender/sender.py`)**:
+     * Implemented matching `/api/transfer/status`, `/api/transfer/toggle_pause`, and `/api/transfer/cancel` endpoints in `IPhonePortalHTTPHandler`.
+     * Added matching Live Active Transfer card with `[ ⏹️ Stop ]` and `[ ❌ Cancel ]` buttons in `IOS_HTML_TEMPLATE`.
+   - **Production Release APK Rebuilt & Verified**:
+     * Compiled and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 22s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,921,589` bytes).
