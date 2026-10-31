@@ -2228,41 +2228,23 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <!-- ⚡ iOS AirDrop Share Sheet Setup Card -->
+    <!-- ⚡ iOS AirDrop Share Sheet Card -->
     <div class="card" style="border: 1px solid rgba(139, 92, 246, 0.45); background: linear-gradient(180deg, rgba(30, 41, 59, 0.85) 0%, rgba(20, 24, 45, 0.9) 100%);">
         <div class="card-title">
             <span style="display:flex;align-items:center;gap:8px;">
                 <span style="font-size:18px;">⚡</span>
                 <span style="color:#C084FC;font-weight:700;">iOS AirDrop Share Sheet</span>
             </span>
-            <span class="badge" style="background:rgba(16, 185, 129, 0.2);color:#10B981;border:1px solid rgba(16, 185, 129, 0.4);">✅ Apple Signed</span>
+            <span class="badge" style="background:rgba(139, 92, 246, 0.25);color:#C084FC;">AirDrop Mode</span>
         </div>
-        <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;line-height:1.5;">
-            Beam photos, 4K videos, and files directly from your iPhone's native <strong>Share</strong> menu (under AirDrop) without opening Safari every time!
+        <p style="color:var(--text-secondary);font-size:13px;margin:0 0 14px;line-height:1.5;">
+            Beam photos, 4K videos, and files directly from your iPhone's native <strong>Share</strong> menu without opening Safari every time!
         </p>
 
-        <!-- 1-Click Apple Signed Install Button -->
-        <a href="https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 18px rgba(139,92,246,0.45);font-size:14px;padding:12px 14px;text-align:center;text-decoration:none;margin-bottom:12px;">
-            📥 Install AirBeam Shortcut (1-Click Apple Signed)
+        <!-- Only the button to download the shortcut -->
+        <a href="https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 18px rgba(139,92,246,0.45);font-size:15px;padding:14px 16px;text-align:center;text-decoration:none;">
+            📥 Download AirBeam Shortcut
         </a>
-
-        <div style="background:rgba(15, 23, 42, 0.75);border:1px solid rgba(139, 92, 246, 0.25);border-radius:12px;padding:12px;">
-            <div style="font-size:12px;font-weight:700;color:#C084FC;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-                <span>⚡</span> HOW TO USE LIKE AIRDROP:
-            </div>
-            <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text-secondary);line-height:1.7;">
-                <li>Tap <strong>Install AirBeam Shortcut</strong> above ➔ Tap <strong>Add Shortcut</strong>.</li>
-                <li>Open <strong>Photos</strong> or <strong>Files</strong> on iPhone, select photos/videos/docs.</li>
-                <li>Tap <strong>Share</strong> ➡️ Tap <strong>Air beam To Pc</strong> ⚡ (under AirDrop).</li>
-                <li>Files beam straight to your PC at full Wi-Fi speed!</li>
-            </ol>
-            <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(139,92,246,0.2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-                <span style="font-size:11px;color:#94A3B8;">🌐 Auto-connects via <strong>airbeam.local:8080</strong></span>
-                <button class="btn btn-secondary" onclick="copyUploadEndpoint()" id="btnCopyEndpoint" style="width:auto;padding:4px 10px;font-size:11px;margin:0;">
-                    📋 Copy Upload URL
-                </button>
-            </div>
-        </div>
     </div>
 
     <!-- 1. Download Files from PC Card -->
