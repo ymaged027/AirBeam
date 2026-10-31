@@ -101,7 +101,7 @@ import webbrowser
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import HTTPServer, SimpleHTTPRequestHandler, BaseHTTPRequestHandler, ThreadingHTTPServer
-import mimetypes
+import mimetypes, plistlib
 import atexit
 import io
 import uuid
@@ -1426,6 +1426,10 @@ def cleanup_airbeam_wifi_on_exit(app_instance=None):
         if portal:
             try: portal.stop()
             except: pass
+        mdns = getattr(app_instance, "mdns_responder", None)
+        if mdns:
+            try: mdns.stop()
+            except: pass
 
     cur = get_current_wifi_profile()
     if cur and cur.lower() == "airbeam":
@@ -2223,6 +2227,37 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- ⚡ iOS AirDrop Share Sheet Setup Card -->
+    <div class="card" style="border: 1px solid rgba(139, 92, 246, 0.45); background: linear-gradient(180deg, rgba(30, 41, 59, 0.85) 0%, rgba(20, 24, 45, 0.9) 100%);">
+        <div class="card-title">
+            <span style="display:flex;align-items:center;gap:8px;">
+                <span style="font-size:18px;">⚡</span>
+                <span style="color:#C084FC;font-weight:700;">iOS AirDrop Share Sheet</span>
+            </span>
+            <span class="badge" style="background:rgba(139, 92, 246, 0.25);color:#C084FC;">AirDrop Mode</span>
+        </div>
+        <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;line-height:1.5;">
+            Beam photos, 4K videos, and files directly from your iPhone's native <strong>Share</strong> menu without opening Safari every time!
+        </p>
+
+        <a href="/airbeam.shortcut" download="AirBeam to PC.shortcut" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 15px rgba(139,92,246,0.35);">
+            📥 Install AirBeam Shortcut (1-Click)
+        </a>
+
+        <div style="margin-top:14px;background:rgba(15, 23, 42, 0.65);border:1px solid rgba(139, 92, 246, 0.25);border-radius:12px;padding:12px;">
+            <div style="font-size:12px;font-weight:700;color:#C084FC;margin-bottom:8px;">HOW TO USE LIKE AIRDROP:</div>
+            <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text-secondary);line-height:1.6;">
+                <li>Tap <strong>Install AirBeam Shortcut</strong> above and tap <strong>Add Shortcut</strong>.</li>
+                <li>In <strong>Photos</strong> or <strong>Files</strong>, select any photos, 4K videos, or docs.</li>
+                <li>Tap <strong>Share</strong> ➡️ Tap <strong>AirBeam to PC</strong> ⚡ (under AirDrop).</li>
+                <li>Your files beam automatically to your PC at full Wi-Fi speed!</li>
+            </ol>
+            <div style="margin-top:8px;font-size:11px;color:#94A3B8;display:flex;align-items:center;gap:6px;">
+                <span>🌐</span> Automatically connects via <strong>http://airbeam.local:8080</strong> on Wi-Fi or Hotspot.
+            </div>
+        </div>
+    </div>
+
     <!-- 1. Download Files from PC Card -->
     <div class="card">
         <div class="card-title">
@@ -2683,6 +2718,42 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(content)
             return
 
+        elif clean_path in ('/airbeam.shortcut', '/shortcut'):
+            try:
+                srv_port = self.server.server_address[1]
+            except Exception:
+                srv_port = 8080
+            shortcut_data = generate_airbeam_shortcut(port=srv_port, host="airbeam.local")
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-apple-shortcut')
+            self.send_header('Content-Disposition', 'attachment; filename="AirBeam to PC.shortcut"')
+            self.send_header('Content-Length', str(len(shortcut_data)))
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(shortcut_data)
+            return
+
+        elif clean_path == '/api/ping':
+            try:
+                srv_port = self.server.server_address[1]
+            except Exception:
+                srv_port = 8080
+            resp = json.dumps({
+                "status": "ok",
+                "app": "AirBeam",
+                "version": "6.0",
+                "mdns": "airbeam.local",
+                "port": srv_port
+            }).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(resp)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(resp)
+            return
+
         elif clean_path == '/api/files':
             files_list = []
             selected = getattr(self.app, "selected_files", [])
@@ -2907,18 +2978,28 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         if clean_path == '/upload':
-            raw_filename = query.get('filename', ['upload.bin'])[0]
-            clean_filename = sanitize_ntfs_filename(urllib.parse.unquote(raw_filename))
-            if not clean_filename:
-                clean_filename = "unnamed_upload.bin"
-            filename = clean_filename
+            # Extract filename from query parameter, X-Filename header, or Content-Disposition
+            raw_filename = query.get('filename', [''])[0]
+            if not raw_filename:
+                raw_filename = self.headers.get('X-Filename') or self.headers.get('x-filename') or ''
+            if not raw_filename:
+                cd = self.headers.get('Content-Disposition') or self.headers.get('content-disposition') or ''
+                m = re.search(r'filename\*?=(?:UTF-8'')?"?([^;\r\n"]+)"?', cd, re.IGNORECASE)
+                if m:
+                    raw_filename = m.group(1)
+
+            ct_header = self.headers.get('Content-Type', '')
+            is_multipart = ct_header.strip().lower().startswith('multipart/form-data')
+            boundary_bytes = None
+            if is_multipart:
+                m_bound = re.search(r'boundary=([^;\s]+)', ct_header, re.IGNORECASE)
+                if m_bound:
+                    raw_bound = m_bound.group(1).strip('"\'')
+                    boundary_bytes = raw_bound.encode('utf-8')
 
             content_len = int(self.headers.get('Content-Length', 0))
 
-            # Detect whether sender is Android by checking three signals in order:
-            # 1. query.get("source", [""])[0].lower() == "android"
-            # 2. "source=android" in (self.headers.get("Referer") or "").lower()
-            # 3. "android" in (self.headers.get("User-Agent") or "").lower()
+            # Detect whether sender is Android by checking three signals in order
             ref = (self.headers.get("Referer") or "").lower()
             ua = (self.headers.get("User-Agent") or "").lower()
             is_android = (
@@ -2948,6 +3029,45 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+            # Handle multipart streaming if body is multipart/form-data
+            header_len = 0
+            if is_multipart and boundary_bytes:
+                header_buf = b""
+                while b"\r\n\r\n" not in header_buf:
+                    chunk = self.rfile.readline()
+                    if not chunk:
+                        break
+                    header_buf += chunk
+                header_str = header_buf.decode('utf-8', errors='ignore')
+                m_fname = re.search(r'filename\*?=(?:UTF-8'')?"?([^;\r\n"]+)"?', header_str, re.IGNORECASE)
+                if m_fname:
+                    raw_filename = m_fname.group(1)
+
+                part_tail = b"\r\n--" + boundary_bytes + b"--\r\n"
+                tail_len = len(part_tail)
+                header_len = len(header_buf)
+                payload_len = max(0, content_len - header_len - tail_len)
+            else:
+                payload_len = content_len
+
+            # Fallback extension if filename remains unspecified
+            if not raw_filename or raw_filename.lower() in ('upload.bin', 'blob', 'unnamed_upload.bin'):
+                ct = ct_header.split(';')[0].strip().lower()
+                ext = mimetypes.guess_extension(ct) or ''
+                if ct == 'video/quicktime':
+                    ext = '.mov'
+                elif ct == 'image/jpeg':
+                    ext = '.jpg'
+                if ext:
+                    raw_filename = f"AirBeam_Beamed_{int(time.time())}{ext}"
+                else:
+                    raw_filename = f"AirBeam_Beamed_{int(time.time())}.bin"
+
+            clean_filename = sanitize_ntfs_filename(urllib.parse.unquote(raw_filename))
+            if not clean_filename:
+                clean_filename = f"AirBeam_Beamed_{int(time.time())}.bin"
+            filename = clean_filename
+
             part_path = os.path.join(recv_dir, filename + ".part")
             final_path = os.path.join(recv_dir, filename)
 
@@ -2963,7 +3083,7 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 pass
 
             CHUNK = 2 * 1024 * 1024
-            bytes_left = content_len
+            bytes_left = payload_len
             try:
                 with open(part_path, 'wb', buffering=8 * 1024 * 1024) as f:
                     while bytes_left > 0:
@@ -2974,6 +3094,11 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                         f.write(buf)
                         bytes_left -= len(buf)
                         self.app.record_ios_stream_bytes(len(buf), is_upload=True)
+
+                if is_multipart and boundary_bytes:
+                    rem = content_len - (header_len + (payload_len - bytes_left))
+                    if rem > 0:
+                        self.rfile.read(rem)
 
                 if os.path.exists(part_path):
                     if os.path.exists(final_path):
@@ -2987,7 +3112,7 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                     if hasattr(self.app, "on_ios_receive_complete"):
                         self.app.after(0, lambda p=final_path: self.app.on_ios_receive_complete(p))
 
-                resp = json.dumps({"status": "ok", "filename": os.path.basename(final_path), "size": content_len}).encode('utf-8')
+                resp = json.dumps({"status": "ok", "filename": os.path.basename(final_path), "size": payload_len}).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(resp)))
@@ -3118,6 +3243,166 @@ class IPhonePortalServer:
                 pass
         self.servers.clear()
         self.threads.clear()
+
+
+def generate_airbeam_shortcut(port: int = 8080, host: str = "airbeam.local") -> bytes:
+    """
+    Generates a native Apple Shortcut binary plist (bplist00) configured
+    as an ActionExtension for the iOS Share Sheet. Allows 1-click beaming
+    of photos, videos, and files straight from the Share menu to AirBeam.
+    """
+    target_url = f"http://{host}:{port}/upload"
+    shortcut_dict = {
+        "WFWorkflowClientRelease": "15.0",
+        "WFWorkflowClientVersion": "2600.0",
+        "WFWorkflowMinimumClientVersion": 900,
+        "WFWorkflowMinimumClientVersionString": "900",
+        "WFWorkflowIcon": {
+            "WFWorkflowIconStartColor": 4282601983,
+            "WFWorkflowIconGlyphNumber": 59714,
+        },
+        "WFWorkflowTypes": [
+            "ActionExtension"
+        ],
+        "WFWorkflowInputContentItemClasses": [
+            "WFGenericFileContentItem",
+            "WFImageContentItem",
+            "WFAVAssetContentItem",
+            "WFPDFContentItem",
+            "WFFolderContentItem"
+        ],
+        "WFWorkflowActions": [
+            {
+                "WFWorkflowActionIdentifier": "is.workflow.actions.downloadurl",
+                "WFWorkflowActionParameters": {
+                    "WFURL": target_url,
+                    "WFHTTPMethod": "POST",
+                    "WFHTTPBodyType": "File",
+                    "WFRequestVariable": {
+                        "Value": {
+                            "Type": "ExtensionInput"
+                        },
+                        "WFSerializationType": "WFTextTokenAttachment"
+                    }
+                }
+            },
+            {
+                "WFWorkflowActionIdentifier": "is.workflow.actions.notification",
+                "WFWorkflowActionParameters": {
+                    "WFNotificationActionTitle": "AirBeam",
+                    "WFNotificationActionBody": "File beamed to PC successfully!"
+                }
+            }
+        ]
+    }
+    return plistlib.dumps(shortcut_dict, fmt=plistlib.FMT_BINARY)
+
+
+class AirBeamMDNSResponder:
+    """
+    Zero-dependency multicast DNS (mDNS) responder for airbeam.local on UDP port 5353.
+    Subnet-aware:
+      - Automatically answers with 192.168.137.1 when queried from Windows Mobile Hotspot clients.
+      - Automatically answers with the PC's Wi-Fi IP when queried from LAN clients.
+      - Enables iOS Safari, Apple Shortcuts, and browsers to reach AirBeam via http://airbeam.local:8080
+        seamlessly without needing to discover or type dynamic IP addresses.
+    """
+    def __init__(self, app_instance, hostname: str = "airbeam.local"):
+        self.app = app_instance
+        self.hostname = hostname.lower().strip()
+        self.running = False
+        self.thread = None
+        self.sock = None
+
+    def _build_dns_label(self, hostname: str) -> bytes:
+        parts = hostname.split('.')
+        buf = b""
+        for p in parts:
+            if p:
+                b = p.encode('utf-8')
+                buf += bytes([len(b)]) + b
+        buf += b"\x00"
+        return buf
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True, name="AirBeamMDNS")
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+
+    def _run(self):
+        target_label = self._build_dns_label(self.hostname)
+        while self.running:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.sock.bind(('', 5353))
+
+                mreq = struct.pack('4sl', socket.inet_aton('224.0.0.251'), socket.INADDR_ANY)
+                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+                cur_ip = getattr(self.app, "local_ip", None) or get_local_ip()
+                for extra_ip in ['192.168.137.1', cur_ip]:
+                    try:
+                        mreq_extra = socket.inet_aton('224.0.0.251') + socket.inet_aton(extra_ip)
+                        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq_extra)
+                    except Exception:
+                        pass
+
+                self.sock.settimeout(1.5)
+                break
+            except Exception:
+                time.sleep(2.0)
+
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(2048)
+                if len(data) < 12:
+                    continue
+                flags = struct.unpack('!H', data[2:4])[0]
+                if (flags & 0x8000) != 0:
+                    continue
+
+                lower_data = data.lower()
+                if b'airbeam' in lower_data and b'local' in lower_data:
+                    qid = data[:2]
+                    client_ip = addr[0]
+                    if client_ip.startswith('192.168.137.'):
+                        resp_ip = '192.168.137.1'
+                    elif client_ip.startswith('127.'):
+                        resp_ip = '127.0.0.1'
+                    else:
+                        resp_ip = getattr(self.app, "local_ip", None) or get_local_ip()
+
+                    header = qid + struct.pack('!HHHHH', 0x8400, 0, 1, 0, 0)
+                    answer = target_label + struct.pack('!HHIH', 1, 0x8001, 120, 4) + socket.inet_aton(resp_ip)
+                    packet = header + answer
+
+                    try:
+                        self.sock.sendto(packet, addr)
+                    except Exception:
+                        pass
+                    try:
+                        self.sock.sendto(packet, ('224.0.0.251', 5353))
+                    except Exception:
+                        pass
+            except socket.timeout:
+                continue
+            except Exception:
+                if not self.running:
+                    break
+                time.sleep(0.5)
 
 # --- AirBeam PC-to-PC Multi-Stream Receiver Server ---
 class PCReceiverServer:
@@ -3892,6 +4177,10 @@ class AirBeamSenderApp(BaseTkApp):
         self.iphone_portal = IPhonePortalServer(self, ports=IPHONE_PORTAL_PORTS)
         self.iphone_portal.start()
 
+        # Start mDNS responder for airbeam.local broadcast (iOS Shortcut / AirDrop receiver)
+        self.mdns_responder = AirBeamMDNSResponder(self, hostname="airbeam.local")
+        self.mdns_responder.start()
+
         # Start Single-Instance IPC listener on 127.0.0.1:7779
         self.ipc_server = SingleInstanceIPCServer(self, port=AIRBEAM_IPC_PORT)
         self.ipc_server.start()
@@ -4562,6 +4851,11 @@ class AirBeamSenderApp(BaseTkApp):
         except Exception:
             pass
         try:
+            if hasattr(self, "mdns_responder") and self.mdns_responder:
+                self.mdns_responder.stop()
+        except Exception:
+            pass
+        try:
             if hasattr(self, "drop_target"):
                 self.drop_target.unhook_all()
         except Exception:
@@ -5214,6 +5508,15 @@ class AirBeamSenderApp(BaseTkApp):
         )
         self.btn_switch_port.pack(side="left", padx=(0, 6))
         bind_button_hover(self.btn_switch_port, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#a855f7", hover_fg="#c084fc")
+
+        self.btn_win_copy_shortcut = tk.Button(
+            btn_win_row, text="⚡ iOS Shortcut", bg="#4c1d95", fg="#e9d5ff",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=8, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#8b5cf6",
+            command=self.copy_airbeam_shortcut_url
+        )
+        self.btn_win_copy_shortcut.pack(side="left", padx=(0, 6))
+        bind_button_hover(self.btn_win_copy_shortcut, normal_bg="#4c1d95", hover_bg="#5b21b6", normal_fg="#e9d5ff", hover_fg="#ffffff")
 
         self.btn_fix_win_firewall = tk.Button(
             btn_win_row, text="🛡️ Fix Firewall", bg="#7f1d1d", fg="#fca5a5",
@@ -7010,6 +7313,16 @@ class AirBeamSenderApp(BaseTkApp):
         except Exception:
             pass
 
+    def copy_airbeam_shortcut_url(self):
+        url = f"http://airbeam.local:{self.iphone_portal_port}/airbeam.shortcut"
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        for btn_attr in ("btn_copy_shortcut_url", "btn_win_copy_shortcut"):
+            if hasattr(self, btn_attr):
+                btn = getattr(self, btn_attr)
+                btn.config(text="Copied! ✅", fg="#10b981")
+                self.after(2000, lambda b=btn: b.config(text="⚡ iOS Shortcut", fg="#e9d5ff"))
+
     def copy_win_hotspot_portal_url(self):
         url = getattr(self, "active_win_hotspot_portal_url", None)
         if url:
@@ -7256,7 +7569,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.lbl_opt3_status.pack(fill="x", pady=(0, 4))
 
         url_badge = tk.Frame(info_box, bg="#1e293b", padx=8, pady=5, highlightthickness=1, highlightbackground="#0284c7")
-        url_badge.pack(fill="x", pady=(0, 6))
+        url_badge.pack(fill="x", pady=(0, 4))
         self.lbl_opt3_url = tk.Label(
             url_badge, text=f"🌐 Web Portal: {portal_url}",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), anchor="w"
@@ -7268,6 +7581,13 @@ class AirBeamSenderApp(BaseTkApp):
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 8, "bold")
         )
         lbl_http_note.pack(side="right")
+
+        shortcut_badge = tk.Frame(info_box, bg="#1e293b", padx=8, pady=4, highlightthickness=1, highlightbackground="#8b5cf6")
+        shortcut_badge.pack(fill="x", pady=(0, 6))
+        tk.Label(
+            shortcut_badge, text=f"⚡ iOS AirDrop Shortcut: Active (http://airbeam.local:{self.iphone_portal_port})",
+            bg="#1e293b", fg="#c084fc", font=("Segoe UI", 8, "bold"), anchor="w"
+        ).pack(side="left")
 
         # Action Buttons Row (Responsive 3-column grid)
         btn_row = tk.Frame(info_box, bg="#0f172a")
@@ -7312,13 +7632,22 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_ref_opt3.grid(row=1, column=0, sticky="ew", padx=(0, 2), pady=2)
         bind_button_hover(self.btn_ref_opt3, normal_bg="#1e293b", hover_bg="#334155", normal_fg="#38bdf8", hover_fg="#38bdf8")
 
+        self.btn_copy_shortcut_url = tk.Button(
+            btn_row, text="⚡ iOS Shortcut", bg="#4c1d95", fg="#e9d5ff",
+            font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
+            highlightthickness=1, highlightbackground="#8b5cf6",
+            command=self.copy_airbeam_shortcut_url
+        )
+        self.btn_copy_shortcut_url.grid(row=1, column=1, sticky="ew", padx=(2, 2), pady=2)
+        bind_button_hover(self.btn_copy_shortcut_url, normal_bg="#4c1d95", hover_bg="#5b21b6", normal_fg="#e9d5ff", hover_fg="#ffffff")
+
         self.btn_fix_firewall = tk.Button(
             btn_row, text="🛡️ Fix Firewall", bg="#7f1d1d", fg="#fca5a5",
             font=("Segoe UI", 8, "bold"), relief="flat", bd=0, padx=6, pady=4, cursor="hand2",
             highlightthickness=1, highlightbackground="#f87171",
             command=self.launch_firewall_fix
         )
-        self.btn_fix_firewall.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(2, 0), pady=2)
+        self.btn_fix_firewall.grid(row=1, column=2, sticky="ew", padx=(2, 0), pady=2)
         bind_button_hover(self.btn_fix_firewall, normal_bg="#7f1d1d", hover_bg="#991b1b", normal_fg="#fca5a5", hover_fg="#ffffff")
 
         # 4-Step Guide with Adaptive Text Wrapping

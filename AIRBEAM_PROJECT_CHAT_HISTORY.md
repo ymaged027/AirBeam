@@ -1619,3 +1619,46 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
 5. **Branch Architecture & Setup Isolation**:
    - Filtered `setup` branch to contain solely the two executable installers: `AirBeam-v6.0-Setup.exe` (x64) and `AirBeam-v6.0-Windows-ARM64-Setup.exe` (ARM64).
    - Switched active working tree to `beta` (`origin/beta`) for all future development.
+
+## 47. iOS AirDrop Share Sheet Integration & Zero-Config mDNS (airbeam.local)
+
+### User Requests:
+1. *"Provide a 1-click iOS Shortcut link tailored to your AirBeam server so your iPhone can beam files straight from the Share menu."*
+2. *"Enable local hostname broadcast (airbeam.local) in sender.py so it always connects automatically."*
+3. *"Make it when the app opens it enables the shortcut receiving on while connected to any wifi or even when the hotspot is on"*
+
+### Technical Implementation & Engineering Details:
+1. **1-Click Native Apple Shortcut Generator (`generate_airbeam_shortcut`)**:
+   - Generates binary property list (`bplist00`) via Python standard library `plistlib`.
+   - Configured with `WFWorkflowTypes: ['ActionExtension']`, embedding the shortcut directly into the native iOS Share Sheet right below AirDrop.
+   - Accepts all input content types (`WFGenericFileContentItem`, `WFImageContentItem`, `WFAVAssetContentItem`, `WFPDFContentItem`, `WFFolderContentItem`).
+   - Executes `is.workflow.actions.downloadurl` POSTing directly to `http://airbeam.local:8080/upload` and triggers an iOS completion notification.
+   - Served on `/airbeam.shortcut` and `/shortcut` with MIME type `application/x-apple-shortcut` and `Content-Disposition: attachment; filename="AirBeam to PC.shortcut"`.
+
+2. **Subnet-Aware Multicast DNS Responder (`AirBeamMDNSResponder`)**:
+   - Implemented a zero-dependency mDNS daemon listening on UDP port `5353`, joining multicast group `224.0.0.251` across all active network interfaces.
+   - Subnet-aware IP resolution:
+     - When queries originate from Windows Mobile Hotspot clients (`192.168.137.*`), responder answers with `192.168.137.1`.
+     - When queries originate from home or office Wi-Fi LAN clients, responder answers with the PC's Wi-Fi adapter IP.
+     - When queries originate locally / loopback, responder answers with `127.0.0.1`.
+   - Emits authoritative unicast responses directly to the querying client and multicast announcements to `224.0.0.251:5353`.
+   - Added `/api/ping` diagnostic endpoint verifying mDNS and portal health.
+
+3. **Persistent Shortcut Receiving at Application Startup**:
+   - Both `IPhonePortalServer` (ports 8080 & 8090) and `AirBeamMDNSResponder` (port 5353) start immediately when `AirBeamSenderApp` initializes.
+   - Shortcut receiving remains active continuously whether connected to any Wi-Fi network, Ethernet, or when Windows Mobile Hotspot is turned ON.
+   - Safe shutdown handlers hooked into `on_window_close()` and `cleanup_airbeam_wifi_on_exit()`.
+
+4. **Multi-Source Upload Stream Engine**:
+   - Enhanced `/upload` handler in `IPhonePortalHTTPHandler` to seamlessly ingest files from four distinct sources without requiring client configuration:
+     1. Query parameter (`?filename=...`)
+     2. Custom request header (`X-Filename`)
+     3. Standard `Content-Disposition: attachment; filename="..."`
+     4. `multipart/form-data` boundary streaming (parsing part headers and zero-memory payload saving)
+     5. Automatic MIME extension detection fallback based on `Content-Type`.
+   - Fully integrated with `record_ios_stream_bytes()` for the live speedometer and `on_ios_receive_complete()` for automatic file explorer reveal.
+
+5. **User Interface Enhancements**:
+   - Embedded a vibrant **⚡ iOS AirDrop Share Sheet** card in the web portal (`IOS_HTML_TEMPLATE`) with 1-click shortcut install and step-by-step usage guide.
+   - Added active AirDrop Shortcut badges and `⚡ iOS Shortcut` copy buttons in Option 1 (Home Wi-Fi) and Option 2 (Windows Mobile Hotspot) on the PC desktop interface.
+

@@ -72,6 +72,8 @@ Real-world transfer benchmarks sending a **10.0 GB 4K video file** across device
   - `Option 3 (Phone Hotspot ➔ PC)`: 📶 Connects Windows PC directly to phone or tablet personal hotspot.
 - **Native Android Receiver App Multi-Stream Engine**: Integrated controls for Android devices running the AirBeam Receiver APK (Tablet Hotspot / Laptop Hotspot / Home Wi-Fi selector buttons, target IP input, ping/detect, and multi-stream socket transfer engine with progress bar, pause, cancel, and speed reporting).
 - **Two-Way Transfer**: Download staged files as individual items or single uncompressed ZIP stream; upload photos, 4K videos, and documents straight back to PC (`Received_From_iPhone` / `Received_From_Android`).
+- **⚡ iOS AirDrop Share Sheet Extension**: 1-click Apple Shortcut installation (`/airbeam.shortcut`) enabling iPhones and iPads to beam photos, 4K videos, and documents straight from the iOS native **Share** menu into Windows without opening Safari every time.
+- **🌐 Zero-Config Local Hostname (`airbeam.local`)**: Zero-dependency subnet-aware mDNS broadcast on UDP port 5353; iOS devices connect automatically via `http://airbeam.local:8080` across any Wi-Fi network or Windows Mobile Hotspot.
 
 ### 2. 💻 PC-to-PC Direct Beaming (Tab 2)
 - **Native Windows Receiver (`PCReceiverServer`)**: Background daemon listening on TCP port 7777 with `SO_REUSEADDR`, `TCP_NODELAY`, and 8 MB socket receive buffers.
@@ -139,6 +141,7 @@ AirBeam operates strictly within local RFC 1918 subnets (`192.168.*.*`, `10.*.*.
 | **8080** | TCP | `IPhonePortalServer` (Primary) | iOS Web Portal HTTP server (Safari bypass default) |
 | **8090** | TCP | `IPhonePortalServer` (Secondary) | Alternative iOS Web Portal port with in-GUI switcher |
 | **8888** | TCP | `ApkServer` | Embedded Android Receiver APK download server |
+| **5353** | UDP | `AirBeamMDNSResponder` | Multicast DNS (mDNS) responder for zero-config `airbeam.local` broadcast |
 
 > [!TIP]
 > If Windows Defender Firewall blocks inbound connections, click **`[ 🛡️ Fix Firewall ]`** in any tab to automatically configure inbound rules across all network profiles with self-elevating UAC privileges.
