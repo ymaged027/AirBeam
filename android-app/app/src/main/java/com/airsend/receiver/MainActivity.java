@@ -100,6 +100,14 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     private Button btnClearStaged;
     private static final int REQUEST_CODE_STAGE_FILES = 202;
 
+    // Hotspot Wi-Fi QR Code Auto-Connect
+    private LinearLayout layoutHotspotQrBox;
+    private ImageView ivHotspotQr;
+
+    // Active Transfer Controls
+    private Button btnActivePauseResume;
+    private Button btnActiveCancel;
+
     private final BroadcastReceiver clipboardReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -188,6 +196,44 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         updateStagedFilesUi();
         handleShareIntent(getIntent());
 
+        // Hotspot Wi-Fi QR View
+        layoutHotspotQrBox = findViewById(R.id.layoutHotspotQrBox);
+        ivHotspotQr = findViewById(R.id.ivHotspotQr);
+
+        // Active Transfer Controls
+        btnActivePauseResume = findViewById(R.id.btnActivePauseResume);
+        btnActiveCancel = findViewById(R.id.btnActiveCancel);
+
+        if (btnActivePauseResume != null) {
+            btnActivePauseResume.setOnClickListener(v -> {
+                if (fileServerService != null) {
+                    boolean paused = fileServerService.togglePauseActiveTransfer();
+                    if (paused) {
+                        btnActivePauseResume.setText("▶️ Resume");
+                        btnActivePauseResume.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF10B981));
+                        if (tvActiveSpeed != null) tvActiveSpeed.setText("⏸️ Paused");
+                        Toast.makeText(this, "Transfer paused", Toast.LENGTH_SHORT).show();
+                    } else {
+                        btnActivePauseResume.setText("⏸️ Pause");
+                        btnActivePauseResume.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFF59E0B));
+                        Toast.makeText(this, "Transfer resumed", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+        }
+
+        if (btnActiveCancel != null) {
+            btnActiveCancel.setOnClickListener(v -> {
+                if (fileServerService != null) {
+                    fileServerService.cancelActiveTransfer();
+                }
+                if (cardActiveTransfer != null) {
+                    cardActiveTransfer.setVisibility(View.GONE);
+                }
+                Toast.makeText(this, "❌ Transfer cancelled", Toast.LENGTH_SHORT).show();
+            });
+        }
+
         Button btnCopyPass = findViewById(R.id.btnCopyPass);
         if (btnCopySsid != null) {
             btnCopySsid.setOnClickListener(v -> copyToClipboard("SSID", tvHotspotSsid != null ? tvHotspotSsid.getText().toString() : "airbeam"));
@@ -264,6 +310,14 @@ public class MainActivity extends AppCompatActivity implements FileServerService
             isUpdatingSwitchFromSystem = true;
             if (switchHotspot != null) {
                 switchHotspot.setChecked(active);
+            }
+            if (layoutHotspotQrBox != null) {
+                if (active) {
+                    layoutHotspotQrBox.setVisibility(View.VISIBLE);
+                    generateHotspotQrCode();
+                } else {
+                    layoutHotspotQrBox.setVisibility(View.GONE);
+                }
             }
             if (tvHotspotSwitchSubtitle != null) {
                 if (active) {
@@ -464,6 +518,10 @@ public class MainActivity extends AppCompatActivity implements FileServerService
 
             if (cardActiveTransfer != null) {
                 cardActiveTransfer.setVisibility(View.VISIBLE);
+                if (btnActivePauseResume != null) {
+                    btnActivePauseResume.setText("⏸️ Pause");
+                    btnActivePauseResume.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFF59E0B));
+                }
                 tvActiveFileName.setText(item.getFileName());
                 tvActiveSpeed.setText("⚡ 0.0 MB/s");
                 pbActiveTransfer.setProgress(0);
@@ -568,6 +626,40 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);
+    }
+
+    private void generateHotspotQrCode() {
+        if (ivHotspotQr == null) return;
+        new Thread(() -> {
+            try {
+                String ssid = tvHotspotSsid != null ? tvHotspotSsid.getText().toString().trim() : "airbeam";
+                String pass = tvHotspotPass != null ? tvHotspotPass.getText().toString().trim() : "airbeam123";
+                // Standard Wi-Fi network QR code format for iPhone / Android native camera scanning
+                String wifiPayload = "WIFI:T:WPA;S:" + ssid + ";P:" + pass + ";;";
+                QRCodeWriter writer = new QRCodeWriter();
+                BitMatrix bitMatrix = writer.encode(
+                        wifiPayload,
+                        BarcodeFormat.QR_CODE,
+                        512,
+                        512
+                );
+                int width = bitMatrix.getWidth();
+                int height = bitMatrix.getHeight();
+                Bitmap bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                for (int x = 0; x < width; x++) {
+                    for (int y = 0; y < height; y++) {
+                        bmp.setPixel(x, y, bitMatrix.get(x, y) ? 0xFF0B1120 : 0xFFFFFFFF);
+                    }
+                }
+                runOnUiThread(() -> {
+                    if (ivHotspotQr != null) {
+                        ivHotspotQr.setImageBitmap(bmp);
+                    }
+                });
+            } catch (Exception e) {
+                Log.e("MainActivity", "Error generating hotspot Wi-Fi QR code", e);
+            }
+        }).start();
     }
 
     private void generatePortalQrCode() {

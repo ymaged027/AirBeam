@@ -96,6 +96,62 @@ public class FileServerService extends Service {
     private ConnectivityManager.NetworkCallback activeNetworkCallback;
     private final ConcurrentHashMap<Long, ActiveTransferSession> activeSessions = new ConcurrentHashMap<>();
     private AirBeamMdnsResponder mdnsResponder;
+    private final AtomicBoolean isTransferPaused = new AtomicBoolean(false);
+    private final AtomicBoolean isTransferCancelled = new AtomicBoolean(false);
+    private final Object transferPauseLock = new Object();
+    private volatile Socket currentHttpUploadSocket = null;
+    private volatile File currentHttpUploadTargetFile = null;
+
+    public boolean isTransferPaused() {
+        return isTransferPaused.get();
+    }
+
+    public boolean togglePauseActiveTransfer() {
+        boolean nowPaused = !isTransferPaused.get();
+        isTransferPaused.set(nowPaused);
+        if (!nowPaused) {
+            synchronized (transferPauseLock) {
+                transferPauseLock.notifyAll();
+            }
+        }
+        return nowPaused;
+    }
+
+    public void cancelActiveTransfer() {
+        isTransferCancelled.set(true);
+        isTransferPaused.set(false);
+        synchronized (transferPauseLock) {
+            transferPauseLock.notifyAll();
+        }
+
+        for (Map.Entry<Long, ActiveTransferSession> entry : activeSessions.entrySet()) {
+            ActiveTransferSession session = entry.getValue();
+            if (session != null) {
+                try {
+                    session.fileChannel.close();
+                    session.raf.close();
+                } catch (Exception ignored) {}
+                if (session.partFile != null && session.partFile.exists()) {
+                    session.partFile.delete();
+                }
+                session.transferItem.setStatus(TransferItem.Status.FAILED);
+                if (transferListener != null) {
+                    transferListener.onTransferFailed(session.transferItem, "Transfer cancelled by user");
+                }
+            }
+        }
+        activeSessions.clear();
+
+        if (currentHttpUploadSocket != null && !currentHttpUploadSocket.isClosed()) {
+            try { currentHttpUploadSocket.close(); } catch (Exception ignored) {}
+        }
+        if (currentHttpUploadTargetFile != null && currentHttpUploadTargetFile.exists()) {
+            try { currentHttpUploadTargetFile.delete(); } catch (Exception ignored) {}
+        }
+
+        releaseWakeAndWifiLocks();
+        updateNotification("AirBeam V2", "Transfer cancelled");
+    }
     private static final List<StagedFile> stagedFiles = Collections.synchronizedList(new ArrayList<>());
 
     public static void addStagedFile(StagedFile file) {
@@ -651,6 +707,13 @@ public class FileServerService extends Service {
 
     private void handleNioControlStream(SocketChannel channel) throws Exception {
         while (isRunning && channel.isOpen()) {
+            if (isTransferCancelled.get()) break;
+            synchronized (transferPauseLock) {
+                while (isTransferPaused.get() && isRunning && !isTransferCancelled.get()) {
+                    try { transferPauseLock.wait(400); } catch (InterruptedException ignored) {}
+                }
+            }
+            if (isTransferCancelled.get()) break;
             ByteBuffer lenBuf = ByteBuffer.allocate(4);
             if (!readFullyOrEof(channel, lenBuf)) break;
             lenBuf.flip();
@@ -835,6 +898,13 @@ public class FileServerService extends Service {
             long remaining = chunkLength;
 
             while (remaining > 0) {
+                if (isTransferCancelled.get()) break;
+                synchronized (transferPauseLock) {
+                    while (isTransferPaused.get() && isRunning && !isTransferCancelled.get()) {
+                        try { transferPauseLock.wait(400); } catch (InterruptedException ignored) {}
+                    }
+                }
+                if (isTransferCancelled.get()) break;
                 int toRead = (int) Math.min(directPayloadBuf.capacity(), remaining);
                 directPayloadBuf.clear();
                 directPayloadBuf.limit(toRead);
@@ -985,7 +1055,7 @@ public class FileServerService extends Service {
                 } else if (uri.startsWith("/download-all.zip")) {
                     handleDownloadAllZip(out);
                 } else if (uri.startsWith("/download")) {
-                    handleDownload(uri, out);
+                    handleDownload(uri, headers, out);
                 } else if (uri.startsWith("/api/clipboard")) {
                     handleGetClipboard(out);
                 } else {
@@ -1061,7 +1131,7 @@ public class FileServerService extends Service {
         sendResponse(out, 200, "OK", "application/json", "{\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8));
     }
 
-    private void handleDownload(String uri, OutputStream out) throws IOException {
+    private void handleDownload(String uri, Map<String, String> headers, OutputStream out) throws IOException {
         int fileIndex = 0;
         try {
             if (uri.contains("id=")) {
@@ -1086,20 +1156,61 @@ public class FileServerService extends Service {
             return;
         }
 
+        long fileLength = staged.size;
+        long startByte = 0;
+        long endByte = fileLength > 0 ? fileLength - 1 : 0;
+        boolean isPartial = false;
+
+        String rangeHeader = headers.get("range");
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=") && fileLength > 0) {
+            String rangeVal = rangeHeader.substring(6).trim();
+            int dash = rangeVal.indexOf('-');
+            if (dash != -1) {
+                try {
+                    startByte = Long.parseLong(rangeVal.substring(0, dash));
+                    if (dash < rangeVal.length() - 1) {
+                        endByte = Long.parseLong(rangeVal.substring(dash + 1));
+                    }
+                    if (endByte >= fileLength) endByte = fileLength - 1;
+                    if (startByte <= endByte) isPartial = true;
+                } catch (Exception ignored) {}
+            }
+        }
+
         try (InputStream fis = staged.openInputStream(this)) {
             String safeName = staged.name.replace("\"", "_");
-            String headers = "HTTP/1.1 200 OK\r\n"
-                    + "Content-Type: " + staged.mimeType + "\r\n"
-                    + (staged.size > 0 ? "Content-Length: " + staged.size + "\r\n" : "")
-                    + "Content-Disposition: attachment; filename=\"" + safeName + "\"\r\n"
-                    + "Access-Control-Allow-Origin: *\r\n"
-                    + "Connection: close\r\n\r\n";
-            out.write(headers.getBytes(StandardCharsets.UTF_8));
+            long sendLen = fileLength > 0 ? (endByte - startByte + 1) : 0;
+
+            String statusLine = isPartial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n";
+            StringBuilder sbHeaders = new StringBuilder(statusLine);
+            sbHeaders.append("Content-Type: ").append(staged.mimeType).append("\r\n");
+            if (sendLen > 0) {
+                sbHeaders.append("Content-Length: ").append(sendLen).append("\r\n");
+            }
+            if (isPartial) {
+                sbHeaders.append("Content-Range: bytes ").append(startByte).append("-").append(endByte).append("/").append(fileLength).append("\r\n");
+            }
+            sbHeaders.append("Accept-Ranges: bytes\r\n");
+            sbHeaders.append("Content-Disposition: attachment; filename=\"").append(safeName).append("\"\r\n");
+            sbHeaders.append("Access-Control-Allow-Origin: *\r\n");
+            sbHeaders.append("Connection: close\r\n\r\n");
+            out.write(sbHeaders.toString().getBytes(StandardCharsets.UTF_8));
+
+            if (startByte > 0) {
+                long skipped = fis.skip(startByte);
+                while (skipped < startByte) {
+                    long s = fis.skip(startByte - skipped);
+                    if (s <= 0) break;
+                    skipped += s;
+                }
+            }
 
             byte[] buf = new byte[1048576];
+            long bytesRemaining = sendLen > 0 ? sendLen : Long.MAX_VALUE;
             int r;
-            while ((r = fis.read(buf)) != -1) {
+            while (bytesRemaining > 0 && (r = fis.read(buf, 0, (int) Math.min(buf.length, bytesRemaining))) != -1) {
                 out.write(buf, 0, r);
+                if (sendLen > 0) bytesRemaining -= r;
             }
             out.flush();
         } catch (Exception e) {
@@ -1147,16 +1258,35 @@ public class FileServerService extends Service {
 
     private void handleHttpUpload(String uri, Map<String, String> headers, InputStream in, OutputStream out) throws IOException {
         acquireWakeAndWifiLocks();
-        String fileName = null;
-        long contentLength = -1;
 
-        if (headers.containsKey("content-length")) {
-            try {
-                contentLength = Long.parseLong(headers.get("content-length"));
-            } catch (Exception ignored) {}
+        // 1. Check for cancel action request
+        if (uri.contains("action=cancel")) {
+            String cfn = "";
+            if (uri.contains("filename=")) {
+                cfn = uri.substring(uri.indexOf("filename=") + 9);
+                int amp = cfn.indexOf('&');
+                if (amp != -1) cfn = cfn.substring(0, amp);
+                try { cfn = URLDecoder.decode(cfn, "UTF-8"); } catch (Exception ignored) {}
+            }
+            cfn = cfn.replaceAll("[\\\\/:*?\"<>|]", "_");
+            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File partFile = new File(downloadsDir, cfn + ".airbeam.part");
+            if (partFile.exists()) partFile.delete();
+            cancelActiveTransfer();
+            sendResponse(out, 200, "OK", "application/json", "{\"status\":\"cancelled\"}".getBytes(StandardCharsets.UTF_8));
+            return;
         }
 
-        // 1. Check query parameters ?filename= or ?name=
+        String fileName = null;
+        long contentLength = -1;
+        long offset = -1;
+        long totalSize = -1;
+
+        if (headers.containsKey("content-length")) {
+            try { contentLength = Long.parseLong(headers.get("content-length")); } catch (Exception ignored) {}
+        }
+
+        // Check query parameters ?filename=, ?offset=, ?total=
         if (uri.contains("filename=")) {
             String fn = uri.substring(uri.indexOf("filename=") + 9);
             int amp = fn.indexOf('&');
@@ -1169,16 +1299,28 @@ public class FileServerService extends Service {
             try { fileName = URLDecoder.decode(fn, "UTF-8"); } catch (Exception ignored) { fileName = fn; }
         }
 
-        // 2. Check x-file-name header
-        if (fileName == null && headers.containsKey("x-file-name")) {
-            try {
-                fileName = URLDecoder.decode(headers.get("x-file-name"), "UTF-8");
-            } catch (Exception ignored) {
-                fileName = headers.get("x-file-name");
-            }
+        if (uri.contains("offset=")) {
+            String offStr = uri.substring(uri.indexOf("offset=") + 7);
+            int amp = offStr.indexOf('&');
+            if (amp != -1) offStr = offStr.substring(0, amp);
+            try { offset = Long.parseLong(offStr); } catch (Exception ignored) {}
+        } else if (headers.containsKey("x-file-offset")) {
+            try { offset = Long.parseLong(headers.get("x-file-offset")); } catch (Exception ignored) {}
         }
 
-        // 3. Check Content-Disposition header
+        if (uri.contains("total=")) {
+            String totStr = uri.substring(uri.indexOf("total=") + 6);
+            int amp = totStr.indexOf('&');
+            if (amp != -1) totStr = totStr.substring(0, amp);
+            try { totalSize = Long.parseLong(totStr); } catch (Exception ignored) {}
+        } else if (headers.containsKey("x-file-total")) {
+            try { totalSize = Long.parseLong(headers.get("x-file-total")); } catch (Exception ignored) {}
+        }
+
+        if (fileName == null && headers.containsKey("x-file-name")) {
+            try { fileName = URLDecoder.decode(headers.get("x-file-name"), "UTF-8"); } catch (Exception ignored) { fileName = headers.get("x-file-name"); }
+        }
+
         if (fileName == null && headers.containsKey("content-disposition")) {
             String disp = headers.get("content-disposition");
             int fnIdx = disp.indexOf("filename=");
@@ -1191,7 +1333,7 @@ public class FileServerService extends Service {
             }
         }
 
-        // 4. Multipart parsing if content-type is multipart/form-data
+        // Multipart boundary check
         String contentType = headers.get("content-type");
         boolean isMultipart = contentType != null && contentType.toLowerCase().contains("multipart/form-data");
         byte[] multipartBoundary = null;
@@ -1228,9 +1370,91 @@ public class FileServerService extends Service {
         File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!downloadsDir.exists()) downloadsDir.mkdirs();
 
+        // CHUNKED UPLOAD PATH (from Web Portal with Pause/Resume/Cancel)
+        if (offset >= 0) {
+            File partFile = new File(downloadsDir, fileName + ".airbeam.part");
+            currentHttpUploadTargetFile = partFile;
+
+            try (RandomAccessFile raf = new RandomAccessFile(partFile, "rw")) {
+                if (offset == 0 && totalSize > 0) {
+                    raf.setLength(totalSize);
+                }
+                raf.seek(offset);
+
+                byte[] buffer = new byte[1048576];
+                long bytesReadTotal = 0;
+                int read;
+
+                if (contentLength > 0) {
+                    while (bytesReadTotal < contentLength) {
+                        if (isTransferCancelled.get()) throw new IOException("Upload cancelled");
+                        synchronized (transferPauseLock) {
+                            while (isTransferPaused.get() && isRunning && !isTransferCancelled.get()) {
+                                try { transferPauseLock.wait(400); } catch (InterruptedException ignored) {}
+                            }
+                        }
+                        if (isTransferCancelled.get()) throw new IOException("Upload cancelled");
+
+                        int toRead = (int) Math.min(buffer.length, contentLength - bytesReadTotal);
+                        read = in.read(buffer, 0, toRead);
+                        if (read == -1) break;
+                        raf.write(buffer, 0, read);
+                        bytesReadTotal += read;
+                    }
+                } else {
+                    while ((read = in.read(buffer)) != -1) {
+                        if (isTransferCancelled.get()) throw new IOException("Upload cancelled");
+                        synchronized (transferPauseLock) {
+                            while (isTransferPaused.get() && isRunning && !isTransferCancelled.get()) {
+                                try { transferPauseLock.wait(400); } catch (InterruptedException ignored) {}
+                            }
+                        }
+                        if (isTransferCancelled.get()) throw new IOException("Upload cancelled");
+
+                        raf.write(buffer, 0, read);
+                        bytesReadTotal += read;
+                    }
+                }
+
+                long curPos = offset + bytesReadTotal;
+                boolean isLast = uri.contains("last=1") || (totalSize > 0 && curPos >= totalSize);
+
+                if (isLast) {
+                    File targetFile = getUniqueFile(downloadsDir, fileName);
+                    if (targetFile.exists()) targetFile.delete();
+                    partFile.renameTo(targetFile);
+
+                    MediaScannerConnection.scanFile(this, new String[]{targetFile.getAbsolutePath()}, null, null);
+                    updateNotification("Received: " + targetFile.getName(), "Saved to Downloads");
+
+                    TransferItem item = new TransferItem(UUID.randomUUID().toString(), targetFile.getName(), targetFile.length());
+                    item.setStatus(TransferItem.Status.COMPLETED);
+                    item.setSavedPath(targetFile.getAbsolutePath());
+                    if (transferListener != null) transferListener.onTransferComplete(item);
+
+                    String resp = "{\"status\":\"ok\",\"completed\":true,\"filename\":\"" + targetFile.getName() + "\"}";
+                    sendResponse(out, 200, "OK", "application/json", resp.getBytes(StandardCharsets.UTF_8));
+                } else {
+                    String resp = "{\"status\":\"ok\",\"received\":" + curPos + "}";
+                    sendResponse(out, 200, "OK", "application/json", resp.getBytes(StandardCharsets.UTF_8));
+                }
+            } catch (Exception e) {
+                if (isTransferCancelled.get()) {
+                    if (partFile.exists()) partFile.delete();
+                }
+                sendResponse(out, 500, "Internal Server Error", "text/plain", e.getMessage().getBytes(StandardCharsets.UTF_8));
+            } finally {
+                currentHttpUploadTargetFile = null;
+                releaseWakeAndWifiLocks();
+            }
+            return;
+        }
+
+        // MONOLITHIC UPLOAD PATH (from iOS Shortcut or single POST)
         File targetFile = getUniqueFile(downloadsDir, fileName);
         String transferId = UUID.randomUUID().toString();
         TransferItem item = new TransferItem(transferId, targetFile.getName(), contentLength);
+        currentHttpUploadTargetFile = targetFile;
 
         if (transferListener != null) {
             transferListener.onTransferStart(item);
@@ -1248,6 +1472,14 @@ public class FileServerService extends Service {
 
             if (contentLength > 0 && !isMultipart) {
                 while (bytesReadTotal < contentLength) {
+                    if (isTransferCancelled.get()) throw new IOException("Transfer cancelled by user");
+                    synchronized (transferPauseLock) {
+                        while (isTransferPaused.get() && isRunning && !isTransferCancelled.get()) {
+                            try { transferPauseLock.wait(400); } catch (InterruptedException ignored) {}
+                        }
+                    }
+                    if (isTransferCancelled.get()) throw new IOException("Transfer cancelled by user");
+
                     int toRead = (int) Math.min(buffer.length, contentLength - bytesReadTotal);
                     read = in.read(buffer, 0, toRead);
                     if (read == -1) break;
@@ -1276,6 +1508,14 @@ public class FileServerService extends Service {
                 }
             } else {
                 while ((read = in.read(buffer)) != -1) {
+                    if (isTransferCancelled.get()) throw new IOException("Transfer cancelled by user");
+                    synchronized (transferPauseLock) {
+                        while (isTransferPaused.get() && isRunning && !isTransferCancelled.get()) {
+                            try { transferPauseLock.wait(400); } catch (InterruptedException ignored) {}
+                        }
+                    }
+                    if (isTransferCancelled.get()) throw new IOException("Transfer cancelled by user");
+
                     bos.write(buffer, 0, read);
                     bytesReadTotal += read;
 
@@ -1313,12 +1553,18 @@ public class FileServerService extends Service {
             String resp = "{\"status\":\"ok\",\"filename\":\"" + targetFile.getName() + "\"}";
             sendResponse(out, 200, "OK", "application/json", resp.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
+            if (isTransferCancelled.get() && targetFile != null && targetFile.exists()) {
+                targetFile.delete();
+            }
             item.setStatus(TransferItem.Status.FAILED);
             if (transferListener != null) {
                 transferListener.onTransferFailed(item, e.getMessage());
             }
             sendResponse(out, 500, "Internal Server Error", "text/plain", e.getMessage().getBytes(StandardCharsets.UTF_8));
         } finally {
+            currentHttpUploadTargetFile = null;
+            isTransferCancelled.set(false);
+            isTransferPaused.set(false);
             releaseWakeAndWifiLocks();
         }
     }

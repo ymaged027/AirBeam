@@ -1725,3 +1725,30 @@ x_tools_card.
      * Bumped version to `v6.0` (`versionCode 10`, `versionName 6.0`) in `android-app/app/build.gradle`.
      * Compiled and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease`).
      * Output APKs placed in `release/AirBeam-v6.0-Receiver.apk`, `release/AirBeam-Receiver.apk`, and `release/AirBeam-v5.0-Receiver.apk`.
+
+12. **Transfer Pause/Resume & Cancel Controls (APK & Web Portal) + Hotspot Wi-Fi Auto-Connect QR**:
+   - **Active Transfer Pause/Resume & Cancel on Android APK**:
+     * Added **`[ ⏸️ Pause ]` / `[ ▶️ Resume ]`** and **`[ ❌ Cancel ]`** action buttons to `cardActiveTransfer` in `activity_main.xml`.
+     * Added thread-safe `isTransferPaused`, `isTransferCancelled`, and `transferPauseLock` state machine to `FileServerService.java`.
+     * Works seamlessly across both PC-to-Android NIO stripe streaming (TCP 7777) and incoming HTTP uploads:
+       - **Pause**: Halts worker read/write loops without dropping TCP sockets or losing chunk state; button dynamically shifts to green **`[ ▶️ Resume ]`**.
+       - **Resume**: Wakes all worker threads via `notifyAll()` and resumes transfers at full speed.
+       - **Cancel**: Closes active sockets, deletes in-flight `.airbeam.part` files, updates notification/UI, and resets transfer card.
+   - **Interactive Pause/Resume & Cancel on Web Portal (Dropzone Uploads)**:
+     * Added **`[ ⏸️ Pause ]` / `[ ▶️ Resume ]`** and **`[ ❌ Cancel ]`** buttons to `uploadProgressBox` in `WebPortalHtml.java` and `desktop-sender/sender.py`.
+     * Implemented slice-based chunked uploading (2MB slices) in Web Portal JavaScript:
+       - Slices binary payload using `File.slice()` and streams with `offset` and `total` query parameters.
+       - **Pause**: Suspends chunk loop cleanly at current slice offset and updates UI status to "Paused".
+       - **Resume**: Re-engages streaming immediately from the exact byte offset without re-uploading completed data.
+       - **Cancel**: Aborts active `XMLHttpRequest`, dispatches `/upload?action=cancel` to purge partial file on server, resets dropzone, and alerts user.
+     * Backwards compatible: standard single-POST uploads (such as Apple Shortcuts) continue to operate via direct streaming.
+   - **Native Download Pause & Resume Support**:
+     * Upgraded `/download` in `FileServerService.java` to support HTTP Range requests (`Accept-Ranges: bytes`, `HTTP 206 Partial Content`), allowing Safari and Chrome download managers on iPhones, Macs, and PCs to pause and resume downloads from the Android tablet.
+   - **Tablet Hotspot Auto-Connect QR Code**:
+     * Added `layoutHotspotQrBox` with `ivHotspotQr` inside the Tablet Hotspot helper card in `activity_main.xml`.
+     * Automatically generates a Wi-Fi Alliance compliant QR code (`WIFI:T:WPA;S:airbeam;P:airbeam123;;`) using ZXing whenever the Mobile Hotspot switch is toggled ON (or detected active in system).
+     * Any iPhone or Android camera scanning this code instantly displays the native "Join 'airbeam' Network" prompt for instant zero-password Wi-Fi connection.
+     * Automatically hides when the Hotspot is switched OFF.
+   - **Production Release APK Rebuilt**:
+     * Rebuilt signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease`).
+     * Updated `release/AirBeam-v6.0-Receiver.apk`, `release/AirBeam-Receiver.apk`, and `release/AirBeam-v5.0-Receiver.apk`.

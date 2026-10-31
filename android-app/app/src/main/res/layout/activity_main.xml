@@ -234,6 +234,52 @@
                         android:layout_height="wrap_content" />
                 </LinearLayout>
 
+                <!-- Hotspot Wi-Fi Auto-Connect QR Code (Visible when Hotspot is ON) -->
+                <LinearLayout
+                    android:id="@+id/layoutHotspotQrBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:background="#1E293B"
+                    android:padding="12dp"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="📷 Scan with Camera to Join Hotspot"
+                        android:textColor="#38BDF8"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="3dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="iPhone and Android cameras connect automatically"
+                        android:textColor="#94A3B8"
+                        android:textSize="10sp"
+                        android:layout_marginBottom="8dp" />
+
+                    <androidx.cardview.widget.CardView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:cardCornerRadius="10dp"
+                        app:cardElevation="0dp"
+                        app:cardBackgroundColor="#FFFFFF">
+
+                        <ImageView
+                            android:id="@+id/ivHotspotQr"
+                            android:layout_width="140dp"
+                            android:layout_height="140dp"
+                            android:layout_margin="6dp"
+                            android:scaleType="fitCenter"
+                            android:contentDescription="Wi-Fi Hotspot Auto-Connect QR Code" />
+                    </androidx.cardview.widget.CardView>
+                </LinearLayout>
+
             </LinearLayout>
         </LinearLayout>
 
@@ -524,6 +570,37 @@
                     android:textColor="#10B981"
                     android:textSize="12sp"
                     android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Active Transfer Control Buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="10dp">
+
+                <Button
+                    android:id="@+id/btnActivePauseResume"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:backgroundTint="#F59E0B"
+                    android:text="⏸️ Pause"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="#FFFFFF" />
+
+                <Button
+                    android:id="@+id/btnActiveCancel"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="#EF4444"
+                    android:text="❌ Cancel"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textColor="#FFFFFF" />
             </LinearLayout>
         </LinearLayout>
 

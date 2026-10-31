@@ -2285,6 +2285,10 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <span class="speed-pill" id="uploadSpeed">0.0 MB/s</span>
                 <span id="uploadPercent">0%</span>
             </div>
+            <div style="display:flex;gap:10px;margin-top:12px;">
+                <button id="btnUploadPauseResume" onclick="toggleUploadPauseResume()" class="btn" style="flex:1;padding:8px;font-size:12px;background:#F59E0B;color:#fff;border-radius:8px;margin-bottom:0;">⏸️ Pause</button>
+                <button id="btnUploadCancel" onclick="cancelUpload()" class="btn" style="flex:1;padding:8px;font-size:12px;background:#EF4444;color:#fff;border-radius:8px;margin-bottom:0;">❌ Cancel</button>
+            </div>
         </div>
 
         <!-- Uploaded Files Section with Clear Button -->
@@ -2532,110 +2536,152 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             }
         }
 
+        let currentUploadXhr = null;
+        let isUploadPaused = false;
+        let isUploadCancelled = false;
+        let activeUploadFiles = [];
+        let activeUploadIndex = 0;
+
+        function toggleUploadPauseResume() {
+            isUploadPaused = !isUploadPaused;
+            const btn = document.getElementById('btnUploadPauseResume');
+            const speedEl = document.getElementById('uploadSpeed');
+            if (isUploadPaused) {
+                if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }
+                if (speedEl) speedEl.innerText = '⏸️ Paused';
+                showToast('⏸️ Upload paused');
+            } else {
+                if (btn) { btn.innerText = '⏸️ Pause'; btn.style.background = '#F59E0B'; }
+                showToast('▶️ Upload resumed');
+            }
+        }
+
+        async function cancelUpload() {
+            isUploadCancelled = true;
+            isUploadPaused = false;
+            if (currentUploadXhr) {
+                try { currentUploadXhr.abort(); } catch (e) {}
+                currentUploadXhr = null;
+            }
+            const curFile = activeUploadFiles[activeUploadIndex];
+            if (curFile) {
+                try {
+                    fetch('/upload?action=cancel&filename=' + encodeURIComponent(curFile.name), { method: 'POST' });
+                } catch (e) {}
+            }
+            document.getElementById('uploadProgressBox').style.display = 'none';
+            document.getElementById('filePicker').value = '';
+            showToast('❌ Upload cancelled');
+        }
+
         async function handleFileSelect(files) {
             if (!files || files.length === 0) return;
+            activeUploadFiles = Array.from(files);
+            activeUploadIndex = 0;
+            isUploadPaused = false;
+            isUploadCancelled = false;
+
             const progressBox = document.getElementById('uploadProgressBox');
             const fileNameEl = document.getElementById('uploadFileName');
             const barFill = document.getElementById('uploadBarFill');
             const speedEl = document.getElementById('uploadSpeed');
             const percentEl = document.getElementById('uploadPercent');
+            const btnPause = document.getElementById('btnUploadPauseResume');
 
+            if (btnPause) {
+                btnPause.innerText = '⏸️ Pause';
+                btnPause.style.background = '#F59E0B';
+            }
             progressBox.style.display = 'block';
             await acquireWakeLock();
 
-            const totalCount = files.length;
-            const totalBatchBytes = Array.from(files).reduce((sum, f) => sum + f.size, 0);
-            const fileProgress = new Array(totalCount).fill(0);
-            let completedCount = 0;
-            let lastSpeedTime = Date.now();
-            let lastBatchLoaded = 0;
-            let liveSpeed = '0.0 MB/s';
+            const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunk slice
 
-            function updateOverallProgress(currentIdx, fileLoaded, fileTotal) {
-                fileProgress[currentIdx] = fileLoaded;
-                const batchLoaded = fileProgress.reduce((a, b) => a + b, 0);
-                const filePct = fileTotal > 0 ? Math.round((fileLoaded / fileTotal) * 100) : 100;
-                const batchPct = totalBatchBytes > 0 ? Math.round((batchLoaded / totalBatchBytes) * 100) : 100;
+            for (activeUploadIndex = 0; activeUploadIndex < activeUploadFiles.length; activeUploadIndex++) {
+                if (isUploadCancelled) break;
+                const file = activeUploadFiles[activeUploadIndex];
+                fileNameEl.innerText = file.name;
+                barFill.style.width = '0%';
+                percentEl.innerText = '0%';
 
-                const now = Date.now();
-                const dt = (now - lastSpeedTime) / 1000;
-                if (dt >= 0.3) {
-                    const dBytes = batchLoaded - lastBatchLoaded;
-                    const mbSec = (dBytes / dt / (1024 * 1024)).toFixed(1);
-                    liveSpeed = `⚡ ${mbSec} MB/s`;
-                    lastSpeedTime = now;
-                    lastBatchLoaded = batchLoaded;
-                }
+                let offset = 0;
+                let lastTime = Date.now();
+                let lastLoaded = 0;
 
-                barFill.style.width = `${batchPct}%`;
-                fileNameEl.innerText = `Uploading file ${Math.min(completedCount + 1, totalCount)} of ${totalCount} (${filePct}%) • Total: ${batchPct}%`;
-                percentEl.innerText = `${(batchLoaded / (1024*1024)).toFixed(1)} / ${(totalBatchBytes / (1024*1024)).toFixed(1)} MB (${batchPct}%)`;
-                speedEl.innerText = liveSpeed;
-            }
+                while (offset < file.size) {
+                    if (isUploadCancelled) break;
+                    while (isUploadPaused && !isUploadCancelled) {
+                        await new Promise(r => setTimeout(r, 200));
+                    }
+                    if (isUploadCancelled) break;
 
-            try {
-                // Run 2 concurrent workers for small/medium files (<32MB); sequential for large files (>=32MB)
-                const hasLargeFile = Array.from(files).some(f => f.size >= 32 * 1024 * 1024);
-                const maxConcurrency = (!hasLargeFile && totalCount > 1) ? 2 : 1;
+                    const chunkEnd = Math.min(offset + CHUNK_SIZE, file.size);
+                    const chunk = file.slice(offset, chunkEnd);
+                    const isLast = (chunkEnd >= file.size);
 
-                let nextIdx = 0;
-                async function worker() {
-                    while (nextIdx < totalCount) {
-                        const idx = nextIdx++;
-                        const file = files[idx];
-                        await uploadSingleFile(file, (loaded, total, spd) => {
-                            updateOverallProgress(idx, loaded, total);
-                        });
-                        completedCount++;
-                        updateOverallProgress(idx, file.size, file.size);
-                        uploadedFilesHistory.unshift({
-                            name: file.name,
-                            size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
-                            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                        });
-                        renderUploadedFiles();
+                    const chunkOk = await new Promise((resolve) => {
+                        const xhr = new XMLHttpRequest();
+                        currentUploadXhr = xhr;
+
+                        xhr.upload.onprogress = (e) => {
+                            if (isUploadCancelled || isUploadPaused) return;
+                            const curTotal = offset + e.loaded;
+                            const pct = Math.round((curTotal / file.size) * 100);
+                            barFill.style.width = pct + '%';
+                            percentEl.innerText = pct + '%';
+
+                            const now = Date.now();
+                            const dt = (now - lastTime) / 1000;
+                            if (dt >= 0.3) {
+                                const speedMB = ((curTotal - lastLoaded) / (1024 * 1024)) / dt;
+                                speedEl.innerText = `⚡ ${speedMB.toFixed(1)} MB/s`;
+                                lastTime = now;
+                                lastLoaded = curTotal;
+                            }
+                        };
+
+                        xhr.onload = () => {
+                            currentUploadXhr = null;
+                            resolve(xhr.status >= 200 && xhr.status < 300);
+                        };
+
+                        xhr.onerror = () => { currentUploadXhr = null; resolve(false); };
+                        xhr.onabort = () => { currentUploadXhr = null; resolve(false); };
+
+                        const url = '/upload?filename=' + encodeURIComponent(file.name) + '&offset=' + offset + '&total=' + file.size + (isLast ? '&last=1' : '');
+                        xhr.open('POST', url, true);
+                        xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+                        xhr.setRequestHeader('x-file-offset', offset.toString());
+                        xhr.setRequestHeader('x-file-total', file.size.toString());
+                        xhr.send(chunk);
+                    });
+
+                    if (isUploadCancelled) break;
+                    if (!chunkOk) {
+                        if (!isUploadPaused) {
+                            showToast(`❌ Upload error: ${file.name}`);
+                            break;
+                        }
+                    } else {
+                        offset = chunkEnd;
                     }
                 }
 
-                const workers = [];
-                for (let w = 0; w < maxConcurrency; w++) {
-                    workers.push(worker());
+                if (!isUploadCancelled && offset >= file.size) {
+                    showToast(`✅ ${file.name} uploaded!`);
+                    uploadedFilesHistory.unshift({
+                        name: file.name,
+                        size: (file.size / (1024 * 1024)).toFixed(1) + ' MB',
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    });
+                    renderUploadedFiles();
                 }
-                await Promise.all(workers);
+            }
 
-                showToast("All files uploaded to PC successfully!");
+            if (!isUploadCancelled) {
                 setTimeout(() => { progressBox.style.display = 'none'; }, 2000);
                 document.getElementById('filePicker').value = '';
-            } catch (err) {
-                showToast(err.message || "Upload error");
-            } finally {
-                await releaseWakeLock();
             }
-        }
-
-        let uploadedFilesHistory = [];
-
-        function renderUploadedFiles() {
-            const box = document.getElementById('uploadedFilesBox');
-            const list = document.getElementById('uploadedList');
-            const badge = document.getElementById('uploadedCountBadge');
-            if (!box || !list) return;
-            if (uploadedFilesHistory.length === 0) {
-                box.style.display = 'none';
-                list.innerHTML = '';
-                if (badge) badge.innerText = '0';
-                return;
-            }
-            box.style.display = 'block';
-            if (badge) badge.innerText = uploadedFilesHistory.length;
-            list.innerHTML = uploadedFilesHistory.map(f => `
-                <div class="file-item">
-                    <div class="file-info">
-                        <div class="file-name" style="font-weight:600;">✅ ${f.name}</div>
-                        <div class="file-meta">${f.size} • Uploaded at ${f.time}</div>
-                    </div>
-                </div>
-            `).join('');
         }
 
         function clearUploadedFilesList() {
@@ -3019,6 +3065,22 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
 
         if clean_path == '/upload':
+            if query.get('action', [''])[0] == 'cancel':
+                cfn = query.get('filename', [''])[0]
+                if cfn:
+                    recv_dir = getattr(self.app, "iphone_received_dir", IPHONE_RECEIVED_DIR)
+                    part = os.path.join(recv_dir, sanitize_ntfs_filename(urllib.parse.unquote(cfn)) + ".part")
+                    if os.path.exists(part):
+                        try: os.remove(part)
+                        except Exception: pass
+                resp = json.dumps({"status": "cancelled"}).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(resp)))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(resp)
+                return
             # Extract filename from query parameter, X-Filename header, or Content-Disposition
             raw_filename = query.get('filename', [''])[0]
             if not raw_filename:
@@ -3123,12 +3185,21 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+            offset_param = query.get('offset', ['-1'])[0]
+            try:
+                offset_val = int(offset_param)
+            except Exception:
+                offset_val = -1
+
             CHUNK = 2 * 1024 * 1024
             bytes_left = payload_len
             bytes_received = 0
             start_time = time.time()
             try:
-                with open(part_path, 'wb', buffering=8 * 1024 * 1024) as f:
+                open_mode = 'r+b' if (offset_val > 0 and os.path.exists(part_path)) else 'wb'
+                with open(part_path, open_mode, buffering=8 * 1024 * 1024) as f:
+                    if offset_val > 0:
+                        f.seek(offset_val)
                     while bytes_left > 0:
                         to_read = min(CHUNK, bytes_left)
                         buf = self.rfile.read(to_read)
@@ -3146,7 +3217,8 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                     if rem > 0:
                         self.rfile.read(rem)
 
-                if os.path.exists(part_path):
+                is_last_chunk = query.get('last', ['0'])[0] == '1' or offset_val < 0
+                if is_last_chunk and os.path.exists(part_path):
                     if os.path.exists(final_path):
                         os.remove(final_path)
                     os.rename(part_path, final_path)
