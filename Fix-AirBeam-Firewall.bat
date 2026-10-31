@@ -21,6 +21,8 @@ netsh advfirewall firewall delete rule name="AirBeam iOS Web Portal 8080" >nul 2
 netsh advfirewall firewall delete rule name="AirBeam High-Speed Transfer" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam APK Server" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam UDP Discovery" >nul 2>&1
+netsh advfirewall firewall delete rule name="AirBeam mDNS Discovery" >nul 2>&1
+netsh advfirewall firewall delete rule name="AirBeam Local DNS" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam Pythonw Runtime" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam Python Runtime" >nul 2>&1
 netsh advfirewall firewall delete rule name="AirBeam Executable" >nul 2>&1
@@ -32,6 +34,8 @@ netsh advfirewall firewall add rule name="AirBeam iOS Web Portal 8080" dir=in ac
 netsh advfirewall firewall add rule name="AirBeam High-Speed Transfer" dir=in action=allow protocol=TCP localport=7777 profile=any
 netsh advfirewall firewall add rule name="AirBeam APK Server" dir=in action=allow protocol=TCP localport=8888 profile=any
 netsh advfirewall firewall add rule name="AirBeam UDP Discovery" dir=in action=allow protocol=UDP localport=7778 profile=any
+netsh advfirewall firewall add rule name="AirBeam mDNS Discovery" dir=in action=allow protocol=UDP localport=5353 profile=any
+netsh advfirewall firewall add rule name="AirBeam Local DNS" dir=in action=allow protocol=UDP localport=53 profile=any
 
 set "PYW=%LOCALAPPDATA%\Python\pythoncore-3.14-64\pythonw.exe"
 if exist "%PYW%" (
@@ -51,7 +55,7 @@ if exist "%LOCALAPPDATA%\Programs\AirBeam\AirBeam.exe" (
 echo.
 echo ======================================================================
 echo   [SUCCESS] Windows Defender Firewall configured successfully!
-echo   All AirBeam ports (8090, 8080, 7777, 8888, 7778) and runtimes are allowed
+echo   All AirBeam ports (8090, 8080, 7777, 8888, 7778, 5353, 53) and runtimes are allowed
 echo   across all network adapters (Home Wi-Fi, Windows Hotspot, etc.)!
 echo ======================================================================
 echo.

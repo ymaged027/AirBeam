@@ -1670,3 +1670,15 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
    - Web Portal now displays a prominent **`[ 📥 Install AirBeam Shortcut (1-Click Apple Signed) ]`** button that opens natively in the iOS Shortcuts app with zero security warnings.
    - `/airbeam.shortcut` automatically redirects to the signed iCloud link, while serving the cached signed binary container (`desktop-sender/assets/AirBeam_Signed.shortcut`) when requested directly.
    - Enhanced the desktop app shortcut modal with a camera-scannable QR code directly opening the iCloud Shortcut on any iPhone or iPad.
+
+8. **Dynamic Multi-Interface mDNS & Local DNS Broadcast for Windows Hotspot and Personal Hotspot Modes**:
+   - Diagnosed failure modes in Windows Hotspot (192.168.137.1) and iPhone Personal Hotspot (172.20.10.x):
+     * When Windows Hotspot is toggled ON after app launch, the virtual adapter was not previously joined to multicast group 224.0.0.251.
+     * Multicast responses on Windows route out the default gateway interface unless socket.IP_MULTICAST_IF is explicitly configured.
+     * iOS queries DNS port 53 via the DHCP gateway on Windows Hotspot when offline.
+   - Upgraded AirBeamMDNSResponder:
+     * Fast, zero-CPU Win32 iphlpapi.GetIpAddrTable dynamic adapter discovery running every 1.5s to immediately join multicast on new hotspot interfaces.
+     * Subnet-aware matching for incoming queries (matches client subnet mask to return exact local IP, with dedicated fallbacks for 192.168.137.1 and 172.20.10.x).
+     * Interface-directed multicast responses via socket.IP_MULTICAST_IF plus direct unicast to querying client.
+     * Dual-protocol listener: answers mDNS (UDP 5353) and standard DNS (UDP 53) queries for irbeam.local.
+   - Updated Fix-AirBeam-Firewall.bat and WindowsHotspotController to allow UDP ports 5353 and 53 across all network profiles (Private, Public, Domain).

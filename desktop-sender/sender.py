@@ -1514,12 +1514,15 @@ try {
     [Windows.Networking.NetworkOperators.TetheringWiFiBand, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime] | Out-Null
     [Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult, Windows.Networking.NetworkOperators, ContentType=WindowsRuntime] | Out-Null
 
-    # Firewall inbound rules for AirBeam ports (including iOS portal 8090)
+    # Firewall inbound rules for AirBeam ports (including iOS portal 8080/8090, mDNS 5353, DNS 53)
     try {
         netsh advfirewall firewall add rule name="AirBeam iOS Web Portal" dir=in action=allow protocol=TCP localport=8090 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam iOS Web Portal 8080" dir=in action=allow protocol=TCP localport=8080 profile=any 2>$null | Out-Null
         netsh advfirewall firewall add rule name="AirBeam High-Speed Transfer" dir=in action=allow protocol=TCP localport=7777 profile=any 2>$null | Out-Null
         netsh advfirewall firewall add rule name="AirBeam APK Server" dir=in action=allow protocol=TCP localport=8888 profile=any 2>$null | Out-Null
         netsh advfirewall firewall add rule name="AirBeam UDP Discovery" dir=in action=allow protocol=UDP localport=7778 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam mDNS Discovery" dir=in action=allow protocol=UDP localport=5353 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam Local DNS" dir=in action=allow protocol=UDP localport=53 profile=any 2>$null | Out-Null
     } catch {}
 
     $asTaskAction = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
@@ -1732,7 +1735,10 @@ try {
     # Firewall inbound rules
     try {
         netsh advfirewall firewall add rule name="AirBeam iOS Web Portal" dir=in action=allow protocol=TCP localport=8090 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam iOS Web Portal 8080" dir=in action=allow protocol=TCP localport=8080 profile=any 2>$null | Out-Null
         netsh advfirewall firewall add rule name="AirBeam High-Speed Transfer" dir=in action=allow protocol=TCP localport=7777 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam mDNS Discovery" dir=in action=allow protocol=UDP localport=5353 profile=any 2>$null | Out-Null
+        netsh advfirewall firewall add rule name="AirBeam Local DNS" dir=in action=allow protocol=UDP localport=53 profile=any 2>$null | Out-Null
     } catch {}
 
     $asTaskAction = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
@@ -3334,19 +3340,27 @@ def generate_airbeam_shortcut(port: int = 8080, host: str = "airbeam.local") -> 
 
 class AirBeamMDNSResponder:
     """
-    Zero-dependency multicast DNS (mDNS) responder for airbeam.local on UDP port 5353.
-    Subnet-aware:
-      - Automatically answers with 192.168.137.1 when queried from Windows Mobile Hotspot clients.
-      - Automatically answers with the PC's Wi-Fi IP when queried from LAN clients.
-      - Enables iOS Safari, Apple Shortcuts, and browsers to reach AirBeam via http://airbeam.local:8080
-        seamlessly without needing to discover or type dynamic IP addresses.
+    Zero-dependency dynamic mDNS (UDP 5353) and local DNS (UDP 53) responder for airbeam.local.
+    Subnet-aware & multi-interface dynamic:
+      - Automatically discovers all active network adapters (Home Wi-Fi, Windows Hotspot 192.168.137.1,
+        and iPhone Personal Hotspot 172.20.10.x) via Win32 iphlpapi GetIpAddrTable with zero CPU overhead.
+      - Continuously joins multicast group 224.0.0.251 on newly enabled interfaces (e.g. when Hotspot turns ON).
+      - Subnet matches incoming queries:
+          * 192.168.137.x query -> answers with 192.168.137.1
+          * 172.20.10.x query -> answers with PC's 172.20.10.x IP
+          * LAN query -> answers with PC's Wi-Fi IP
+      - Interface-directed multicast responses via socket.IP_MULTICAST_IF plus direct unicast reply to client.
+      - Dual listener: answers both mDNS queries (UDP 5353) and standard DNS queries (UDP 53) so Apple
+        Shortcuts and Safari seamlessly resolve http://airbeam.local:8080 across all 3 networking modes.
     """
     def __init__(self, app_instance, hostname: str = "airbeam.local"):
         self.app = app_instance
         self.hostname = hostname.lower().strip()
         self.running = False
         self.thread = None
-        self.sock = None
+        self.sock_mdns = None
+        self.sock_dns = None
+        self.joined_interfaces = set()
 
     def _build_dns_label(self, hostname: str) -> bytes:
         parts = hostname.split('.')
@@ -3358,6 +3372,95 @@ class AirBeamMDNSResponder:
         buf += b"\x00"
         return buf
 
+    def get_active_ipv4_interfaces(self) -> list:
+        """
+        Fast, zero-subprocess discovery of active IPv4 interfaces and subnet masks via Win32 iphlpapi.
+        Returns list of tuples: [(ip_str, mask_str), ...]
+        """
+        res = []
+        try:
+            GetIpAddrTable = ctypes.windll.iphlpapi.GetIpAddrTable
+            buf = ctypes.create_string_buffer(65536)
+            size = wintypes.ULONG(65536)
+            if GetIpAddrTable(buf, ctypes.byref(size), 0) == 0:
+                num = struct.unpack_from('I', buf.raw, 0)[0]
+                for i in range(num):
+                    offset = 4 + i * 24
+                    addr_bytes = buf.raw[offset:offset+4]
+                    mask_bytes = buf.raw[offset+8:offset+12]
+                    ip = socket.inet_ntoa(addr_bytes)
+                    mask = socket.inet_ntoa(mask_bytes)
+                    if not ip.startswith(('127.', '169.254.', '0.')):
+                        res.append((ip, mask))
+        except Exception:
+            pass
+
+        if not res:
+            try:
+                for item in socket.getaddrinfo(socket.gethostname(), None):
+                    if item[0] == socket.AF_INET:
+                        ip = item[4][0]
+                        if not ip.startswith(('127.', '169.254.', '0.')):
+                            res.append((ip, '255.255.255.0'))
+            except Exception:
+                pass
+        return res
+
+    def _sync_memberships(self):
+        if not self.sock_mdns:
+            return
+        interfaces = self.get_active_ipv4_interfaces()
+        current_ips = {ip for ip, _ in interfaces}
+
+        for ip, _ in interfaces:
+            if ip not in self.joined_interfaces:
+                try:
+                    mreq = socket.inet_aton('224.0.0.251') + socket.inet_aton(ip)
+                    self.sock_mdns.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                    self.joined_interfaces.add(ip)
+                except OSError:
+                    pass
+
+        stale = self.joined_interfaces - current_ips
+        for ip in stale:
+            self.joined_interfaces.discard(ip)
+
+    def _get_best_reply_ip(self, client_ip: str) -> str:
+        if client_ip.startswith('127.'):
+            return '127.0.0.1'
+
+        interfaces = self.get_active_ipv4_interfaces()
+
+        # Match client subnet
+        try:
+            client_int = struct.unpack('!I', socket.inet_aton(client_ip))[0]
+            for if_ip, mask in interfaces:
+                if_int = struct.unpack('!I', socket.inet_aton(if_ip))[0]
+                mask_int = struct.unpack('!I', socket.inet_aton(mask))[0]
+                if (client_int & mask_int) == (if_int & mask_int):
+                    return if_ip
+        except Exception:
+            pass
+
+        # Windows Hotspot client
+        if client_ip.startswith('192.168.137.'):
+            return '192.168.137.1'
+
+        # iPhone Personal Hotspot client
+        if client_ip.startswith('172.20.10.'):
+            for if_ip, _ in interfaces:
+                if if_ip.startswith('172.20.10.'):
+                    return if_ip
+
+        cur_app_ip = getattr(self.app, "local_ip", None)
+        if cur_app_ip and not cur_app_ip.startswith(('127.', '169.254.')):
+            return cur_app_ip
+
+        if interfaces:
+            return interfaces[0][0]
+
+        return '192.168.137.1'
+
     def start(self):
         if self.running:
             return
@@ -3367,76 +3470,98 @@ class AirBeamMDNSResponder:
 
     def stop(self):
         self.running = False
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception:
-                pass
+        for s in (self.sock_mdns, self.sock_dns):
+            if s:
+                try: s.close()
+                except Exception: pass
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=1.5)
 
     def _run(self):
         target_label = self._build_dns_label(self.hostname)
+
+        # 1. mDNS socket on UDP port 5353
+        try:
+            self.sock_mdns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.sock_mdns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock_mdns.bind(('', 5353))
+            mreq_any = socket.inet_aton('224.0.0.251') + socket.inet_aton('0.0.0.0')
+            self.sock_mdns.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq_any)
+            self.sock_mdns.settimeout(0.5)
+        except Exception:
+            pass
+
+        # 2. Local DNS fallback socket on UDP port 53
+        try:
+            self.sock_dns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            self.sock_dns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock_dns.bind(('', 53))
+            self.sock_dns.settimeout(0.5)
+        except Exception:
+            pass
+
+        self._sync_memberships()
+        last_sync = time.time()
+
         while self.running:
-            try:
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.sock.bind(('', 5353))
+            now = time.time()
+            if now - last_sync >= 1.5:
+                self._sync_memberships()
+                last_sync = now
 
-                mreq = struct.pack('4sl', socket.inet_aton('224.0.0.251'), socket.INADDR_ANY)
-                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            # Process incoming mDNS queries (UDP 5353)
+            if self.sock_mdns:
+                try:
+                    data, addr = self.sock_mdns.recvfrom(2048)
+                    if len(data) >= 12 and (struct.unpack('!H', data[2:4])[0] & 0x8000) == 0:
+                        lower = data.lower()
+                        if b'airbeam' in lower and b'local' in lower:
+                            qid = data[:2]
+                            client_ip = addr[0]
+                            resp_ip = self._get_best_reply_ip(client_ip)
 
-                cur_ip = getattr(self.app, "local_ip", None) or get_local_ip()
-                for extra_ip in ['192.168.137.1', cur_ip]:
-                    try:
-                        mreq_extra = socket.inet_aton('224.0.0.251') + socket.inet_aton(extra_ip)
-                        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq_extra)
-                    except Exception:
-                        pass
+                            header = qid + struct.pack('!HHHHH', 0x8400, 0, 1, 0, 0)
+                            answer = target_label + struct.pack('!HHIH', 1, 0x8001, 120, 4) + socket.inet_aton(resp_ip)
+                            packet = header + answer
 
-                self.sock.settimeout(1.5)
-                break
-            except Exception:
-                time.sleep(2.0)
+                            # Direct unicast to client
+                            try:
+                                self.sock_mdns.sendto(packet, addr)
+                            except Exception:
+                                pass
 
-        while self.running:
-            try:
-                data, addr = self.sock.recvfrom(2048)
-                if len(data) < 12:
-                    continue
-                flags = struct.unpack('!H', data[2:4])[0]
-                if (flags & 0x8000) != 0:
-                    continue
+                            # Interface-directed multicast
+                            try:
+                                if resp_ip != '127.0.0.1':
+                                    self.sock_mdns.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(resp_ip))
+                                self.sock_mdns.sendto(packet, ('224.0.0.251', 5353))
+                            except Exception:
+                                pass
+                except (socket.timeout, OSError):
+                    pass
 
-                lower_data = data.lower()
-                if b'airbeam' in lower_data and b'local' in lower_data:
-                    qid = data[:2]
-                    client_ip = addr[0]
-                    if client_ip.startswith('192.168.137.'):
-                        resp_ip = '192.168.137.1'
-                    elif client_ip.startswith('127.'):
-                        resp_ip = '127.0.0.1'
-                    else:
-                        resp_ip = getattr(self.app, "local_ip", None) or get_local_ip()
+            # Process incoming standard DNS queries (UDP 53)
+            if self.sock_dns:
+                try:
+                    data, addr = self.sock_dns.recvfrom(2048)
+                    if len(data) >= 12 and (struct.unpack('!H', data[2:4])[0] & 0x8000) == 0:
+                        lower = data.lower()
+                        if b'airbeam' in lower:
+                            qid = data[:2]
+                            client_ip = addr[0]
+                            resp_ip = self._get_best_reply_ip(client_ip)
 
-                    header = qid + struct.pack('!HHHHH', 0x8400, 0, 1, 0, 0)
-                    answer = target_label + struct.pack('!HHIH', 1, 0x8001, 120, 4) + socket.inet_aton(resp_ip)
-                    packet = header + answer
+                            idx = 12
+                            while idx < len(data) and data[idx] != 0:
+                                idx += 1 + data[idx]
+                            idx += 1
+                            qsec = data[12:idx+4] if idx + 4 <= len(data) else target_label + b'\x00\x01\x00\x01'
 
-                    try:
-                        self.sock.sendto(packet, addr)
-                    except Exception:
-                        pass
-                    try:
-                        self.sock.sendto(packet, ('224.0.0.251', 5353))
-                    except Exception:
-                        pass
-            except socket.timeout:
-                continue
-            except Exception:
-                if not self.running:
-                    break
-                time.sleep(0.5)
+                            dns_header = qid + b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00'
+                            ans_sec = b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04' + socket.inet_aton(resp_ip)
+                            self.sock_dns.sendto(dns_header + qsec + ans_sec, addr)
+                except (socket.timeout, OSError):
+                    pass
 
 # --- AirBeam PC-to-PC Multi-Stream Receiver Server ---
 class PCReceiverServer:
