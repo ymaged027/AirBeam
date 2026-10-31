@@ -1832,11 +1832,14 @@ public class FileServerService extends Service {
     public static String getLocalIpAddress(Context context) {
         try {
             List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
-            // 1. Prioritize direct hotspot subnets (192.168.43.x tablet hotspot or 192.168.137.x Windows hotspot)
+
+            // Pass 1: Active Hotspot IP (192.168.43.x) or Windows Hotspot (192.168.137.x)
             for (NetworkInterface intf : interfaces) {
                 if (intf.isLoopback() || !intf.isUp()) continue;
-                List<InetAddress> addrs = Collections.list(intf.getInetAddresses());
-                for (InetAddress addr : addrs) {
+                String name = intf.getName().toLowerCase();
+                if (isCellularInterface(name)) continue;
+
+                for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
                     if (!addr.isLoopbackAddress() && addr.getAddress().length == 4) {
                         String host = addr.getHostAddress();
                         if (host != null && (host.startsWith("192.168.43.") || host.startsWith("192.168.137."))) {
@@ -1845,29 +1848,67 @@ public class FileServerService extends Service {
                     }
                 }
             }
-            // 2. Standard Wi-Fi
-            WifiManager wm = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wm != null && wm.isWifiEnabled()) {
-                int ipInt = wm.getConnectionInfo().getIpAddress();
-                if (ipInt != 0) {
-                    return Formatter.formatIpAddress(ipInt);
-                }
-            }
-            // 3. Any active IPv4 interface
+
+            // Pass 2: Wi-Fi client / Hotspot interface by name (wlan*, swlan*, ap*, p2p*)
             for (NetworkInterface intf : interfaces) {
                 if (intf.isLoopback() || !intf.isUp()) continue;
-                List<InetAddress> addrs = Collections.list(intf.getInetAddresses());
-                for (InetAddress addr : addrs) {
+                String name = intf.getName().toLowerCase();
+                if (isCellularInterface(name)) continue;
+
+                if (name.startsWith("wlan") || name.startsWith("ap") || name.startsWith("swlan") || name.startsWith("p2p")) {
+                    for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
+                        if (!addr.isLoopbackAddress() && addr.getAddress().length == 4) {
+                            String host = addr.getHostAddress();
+                            if (host != null && !host.startsWith("127.") && !host.startsWith("169.254.")) {
+                                return host;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pass 3: WifiManager ConnectionInfo if non-zero
+            try {
+                WifiManager wm = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null && wm.isWifiEnabled()) {
+                    int ipInt = wm.getConnectionInfo().getIpAddress();
+                    if (ipInt != 0) {
+                        return Formatter.formatIpAddress(ipInt);
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // Pass 4: Any non-cellular, non-loopback IPv4 interface (e.g. eth0)
+            for (NetworkInterface intf : interfaces) {
+                if (intf.isLoopback() || !intf.isUp()) continue;
+                String name = intf.getName().toLowerCase();
+                if (isCellularInterface(name)) continue;
+
+                for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
                     if (!addr.isLoopbackAddress() && addr.getAddress().length == 4) {
                         String host = addr.getHostAddress();
-                        if (host != null && !host.startsWith("127.")) {
+                        if (host != null && !host.startsWith("127.") && !host.startsWith("169.254.")) {
                             return host;
                         }
                     }
                 }
             }
+
+            // Pass 5: If hotspot is active, default to standard Android hotspot IP
+            if (isHotspotActive(context)) {
+                return "192.168.43.1";
+            }
         } catch (Exception ignored) {}
-        return "10.150.131.50";
+        return "192.168.43.1";
+    }
+
+    private static boolean isCellularInterface(String name) {
+        if (name == null) return false;
+        String n = name.toLowerCase();
+        return n.startsWith("rmnet") || n.startsWith("ccmni") || n.startsWith("pdp")
+                || n.startsWith("ppp") || n.startsWith("dummy") || n.startsWith("tun")
+                || n.startsWith("tap") || n.startsWith("radio") || n.startsWith("cellular")
+                || n.startsWith("wwan") || n.startsWith("data");
     }
 
     public static boolean isHotspotActive(Context context) {

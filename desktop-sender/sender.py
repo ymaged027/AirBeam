@@ -1013,18 +1013,22 @@ def get_connected_hotspot_client_ips():
 
 def find_hotspot_device_ip():
     """Finds the tablet's IP on dynamic Wi-Fi gateway, 192.168.43.1, or 192.168.137.x."""
-    # 0. Proactively probe candidate hotspot targets across ports 7777 and 8080
     probe_candidates = []
     gw = get_wifi_gateway_ip()
-    if gw and gw not in probe_candidates:
-        probe_candidates.append(gw)
+    if gw and gw not in probe_candidates and not gw.startswith(('127.', '169.254.', '0.')):
+        if gw.startswith(('192.168.43.', '192.168.137.', '172.20.10.')):
+            probe_candidates.append(gw)
+
     for ip in ("192.168.43.1", "10.150.131.50"):
         if ip not in probe_candidates:
             probe_candidates.append(ip)
+
     try:
         mdns = socket.gethostbyname("airbeam.local")
-        if mdns and mdns not in probe_candidates:
-            probe_candidates.append(mdns)
+        # Filter out cellular carrier IPs (like 10.213.x.x)
+        if mdns and mdns not in probe_candidates and not mdns.startswith(('127.', '169.254.', '0.')):
+            if mdns.startswith(('192.168.', '172.20.10.')) or mdns == "10.150.131.50":
+                probe_candidates.append(mdns)
     except Exception:
         pass
 
@@ -1999,12 +2003,15 @@ class ApkServer(threading.Thread):
                 super().end_headers()
 
             def do_GET(self):
-                if self.path in ('/', '/download', '/apk'):
-                    self.send_response(302)
-                    self.send_header('Location', f'/{urllib.parse.quote(apk_name)}')
-                    self.end_headers()
-                    return
-                super().do_GET()
+                try:
+                    if self.path in ('/', '/download', '/apk'):
+                        self.send_response(302)
+                        self.send_header('Location', f'/{urllib.parse.quote(apk_name)}')
+                        self.end_headers()
+                        return
+                    super().do_GET()
+                except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, OSError):
+                    pass
 
         try:
             httpd = HTTPServer(('0.0.0.0', self.port), CustomHandler)
@@ -9313,49 +9320,9 @@ class AirBeamSenderApp(BaseTkApp):
             return
 
         target = self.entry_ip.get().strip()
-
-        # 1. Proactively check if tablet is on the Direct Hotspot
-        hip = find_hotspot_device_ip()
-        if hip:
-            target = hip
-            self.entry_ip.delete(0, tk.END)
-            self.entry_ip.insert(0, target)
-            self.lbl_device_status.config(
-                text=f"🚀 Direct Hotspot Active: ({target}) — 50-95+ MB/s Active!",
-                style="StatusHotspot.TLabel"
-            )
-
         if not target or target.startswith("Searching"):
             messagebox.showwarning("No Target", "Target device IP not found. Click Scan or enter IP.")
             return
-
-        # 2. Test connectivity before starting transfer
-        try:
-            test_s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            test_s.settimeout(1.0)
-            err = test_s.connect_ex((target, NIO_PORT))
-            test_s.close()
-            if err != 0:
-                # Target IP didn't respond - search hotspot once more
-                hip2 = find_hotspot_device_ip()
-                if hip2 and hip2 != target:
-                    target = hip2
-                    self.entry_ip.delete(0, tk.END)
-                    self.entry_ip.insert(0, target)
-                    self.lbl_device_status.config(
-                        text=f"🚀 Direct Hotspot Active: ({target}) — 50-95+ MB/s Active!",
-                        style="StatusHotspot.TLabel"
-                    )
-                else:
-                    messagebox.showerror(
-                        "Cannot Connect",
-                        f"Cannot connect to {target}:7777.\n\n"
-                        "1. Make sure AirBeam is OPEN on your tablet screen.\n"
-                        "2. Check if the tablet IP shown in AirBeam matches this IP."
-                    )
-                    return
-        except Exception:
-            pass
 
         self.is_sending = True
         self.pause_event.set()
@@ -9364,15 +9331,73 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_send.config(state="disabled", text="Beaming 50-95+ MB/s...")
         self.btn_pause.config(state="normal", text="⏸ Pause")
         self.btn_cancel.config(state="normal")
+        self.lbl_progress.config(text="Connecting to tablet socket...")
 
-        engine = HighSpeedTransferEngine(
-            target, self.selected_files,
-            self.on_transfer_progress,
-            self.on_transfer_complete,
-            self.pause_event,
-            self.cancel_event
-        )
-        threading.Thread(target=engine.execute, daemon=True).start()
+        def runner():
+            nonlocal target
+            connected = False
+            # 1. Proactively test target in background thread (never freezes Tkinter GUI!)
+            try:
+                test_s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                test_s.settimeout(1.5)
+                err = test_s.connect_ex((target, NIO_PORT))
+                test_s.close()
+                if err == 0:
+                    connected = True
+            except Exception:
+                pass
+
+            # 2. If target failed, try finding hotspot IP in background
+            if not connected:
+                hip = find_hotspot_device_ip()
+                if hip and hip != target:
+                    try:
+                        test_s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        test_s.settimeout(1.5)
+                        if test_s.connect_ex((hip, NIO_PORT)) == 0:
+                            test_s.close()
+                            target = hip
+                            connected = True
+                            self.after(0, lambda h=hip: (
+                                self.entry_ip.delete(0, tk.END),
+                                self.entry_ip.insert(0, h),
+                                self.lbl_device_status.config(
+                                    text=f"🚀 Direct Hotspot Active: ({h}) — 50-95+ MB/s Active!",
+                                    style="StatusHotspot.TLabel"
+                                )
+                            ))
+                        else:
+                            test_s.close()
+                    except Exception:
+                        pass
+
+            if not connected:
+                self.after(0, lambda: (
+                    self.btn_send.config(state="normal", text="⚡ Beam Files (Multi-Stream)"),
+                    self.btn_pause.config(state="disabled", text="⏸ Pause"),
+                    self.btn_cancel.config(state="disabled"),
+                    self.lbl_progress.config(text="Ready to beam"),
+                    messagebox.showerror(
+                        "Cannot Connect",
+                        f"Cannot connect to {target}:7777.\n\n"
+                        "1. Make sure AirBeam Receiver is OPEN on your tablet screen.\n"
+                        "2. Ensure PC and tablet are connected to the same Wi-Fi or tablet hotspot.\n"
+                        "3. Check the IP shown on your tablet's AirBeam screen."
+                    )
+                ))
+                self.is_sending = False
+                return
+
+            engine = HighSpeedTransferEngine(
+                target, self.selected_files,
+                self.on_transfer_progress,
+                self.on_transfer_complete,
+                self.pause_event,
+                self.cancel_event
+            )
+            engine.execute()
+
+        threading.Thread(target=runner, daemon=True).start()
 
     def on_transfer_progress(self, file_idx, total_files, filename, pct, cur_spd, avg_spd=0.0, eta_sec=0):
         if cur_spd > 0:

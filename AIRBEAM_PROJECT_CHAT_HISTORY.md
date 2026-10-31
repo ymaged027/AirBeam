@@ -1809,3 +1809,28 @@ x_tools_card.
    - **Production Release APK Rebuilt & Packaged**:
      * Rebuilt and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 14s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,923,763` bytes).
+
+15. **Critical Fix: Cellular Interface Filtering & Non-Blocking GUI Transfer Thread**:
+   - **Root Cause of APK Receive Failure & IP 10.213.101.24**:
+     * On LTE-enabled Android devices (e.g. Samsung SM-T505N tablet), when mobile data is active, Android creates an active cellular interface (e.g. `rmnet_data0`) with a carrier-assigned IP (`10.213.101.24`).
+     * `FileServerService.getLocalIpAddress(context)` previously fell through to "Any active IPv4 interface" which picked up `rmnet_data0` before `wlan0`, returning the cellular IP `10.213.101.24` to the entire app, QR codes, mDNS broadcasts, and Web Portal endpoints.
+     * Because `10.213.101.24` is an unreachable cellular carrier IP, clients (iPhone and PC) could not connect or download files from the APK.
+   - **Bulletproof Android Interface Selector (`FileServerService.java`)**:
+     * Implemented `isCellularInterface()` filtering to strictly ignore `rmnet*`, `ccmni*`, `pdp*`, `ppp*`, `dummy*`, `tun*`, `tap*`, `cellular*`, `wwan*`, and `data*`.
+     * Strict multi-pass selection:
+       1. Prioritize active hotspot subnet `192.168.43.x` on Wi-Fi AP interfaces (`ap*`, `swlan*`, `softap*`).
+       2. Prioritize Wi-Fi client interfaces (`wlan*`, `ap*`, `p2p*`) returning true LAN IPs (e.g. `192.168.1.12`).
+       3. Fallback to `WifiManager.getConnectionInfo().getIpAddress()`.
+       4. Fallback to any remaining non-cellular interface (e.g. `eth0`).
+       5. Default to `192.168.43.1` (never a cellular IP).
+   - **Root Cause of Desktop App "Not Responding" & Crash (`desktop-sender/sender.py`)**:
+     * In `start_send_thread()`, `find_hotspot_device_ip()` and socket connect probes ran directly on the Tkinter main GUI thread, blocking Windows message dispatching for 10-15 seconds and freezing the window (`Not Responding`).
+     * `find_hotspot_device_ip()` picked up the cellular `airbeam.local` IP (`10.213.101.24`) and overwrote the valid router IP (`192.168.1.12`), attempting to connect to a dead cellular IP.
+     * In `ApkServer`, client disconnects during APK download raised unhandled `ConnectionResetError 10054`.
+   - **Desktop App Freezing & Crash Fixes (`desktop-sender/sender.py`)**:
+     * **Asynchronous Runner Thread**: Moved socket connection tests, fallback hotspot scans, and transfer execution into a background daemon runner thread. The Tkinter GUI stays 100% responsive at all times without freezing.
+     * **Cellular IP Filter**: `find_hotspot_device_ip()` now filters out cellular IPs from mDNS, only accepting verified Wi-Fi subnets (`192.168.*`, `172.20.10.*`, `10.150.131.50`).
+     * **Safe APK Server**: Wrapped `super().do_GET()` in `ApkServer` to catch `(ConnectionResetError, BrokenPipeError, ConnectionAbortedError, OSError)`.
+   - **Production Release APK Rebuilt & Deployed**:
+     * Rebuilt signed release APK with Gradle 8.5 (`assembleRelease` in 22s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,107` bytes).
