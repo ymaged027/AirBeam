@@ -1697,3 +1697,31 @@ x_tools_card.
    - Standardized all Web Portal QR codes and links across the PC application to use the universal hostname http://airbeam.local:8080 (Option 1 Home Wi-Fi, Option 2 Windows Mobile Hotspot, Option 3 Phone Hotspot, PC-to-PC Web Portal, Zoom Modals, and Placeholders).
    - Leveraging the dynamic multi-interface mDNS and local DNS responder, http://airbeam.local:8080 resolves seamlessly and authoritatively across all three connection modes without being tied to a fluctuating IP address.
    - Significantly reduced QR matrix density (shorter character payload), producing larger blocks for instantaneous scanning from iPhone and Android cameras across any distance.
+
+11. **Android Receiver APK (v6.0) Web Portal & iOS AirDrop Broadcast Architecture**:
+   - **Zero-Configuration mDNS Responder (`airbeam.local`) on Android**:
+     * Implemented pure Java RFC 6762 mDNS responder (`AirBeamMdnsResponder.java`) listening on UDP 5353 with `setReuseAddress(true)` and joining multicast group `224.0.0.251`.
+     * Automatically acquires `WifiManager.MulticastLock` so the Android Wi-Fi chipset never filters incoming mDNS multicast packets.
+     * Dual-registers with Android's native `NsdManager` for `_http._tcp.` service discovery.
+     * Answers queries for `airbeam.local.` with authoritative A-records pointing to the device's active IPv4 address (Wi-Fi or Hotspot), transmitting both unicast and multicast replies.
+     * Runs periodic announcements every 15s to keep iOS/macOS ARP and mDNS caches fresh.
+   - **Two-Way File Transfers between Android & iPhone**:
+     * **iPhone ➔ Android**: Supports native iOS Shortcut (`AirBeam to PC / Android`) and Safari Web Portal uploads to `POST http://airbeam.local:8080/upload`.
+     * Implemented multi-source filename resolution (URL parameters `?filename=`, `x-file-name`, `Content-Disposition`, multipart headers).
+     * Implemented streaming multipart/form-data boundary parser with automated trailing boundary truncation (`stripTrailingBoundary`) to ensure pristine binary integrity for photos, videos, and archives.
+     * Saves files directly to Android's public `Downloads` directory and triggers `MediaScannerConnection.scanFile` for immediate display in Gallery/Photos.
+     * **Android ➔ iPhone**: Added staged files engine (`StagedFile.java`) and `GET /download` + `GET /download-all.zip` streaming endpoints.
+     * Added **`[ 📤 Send Files to iPhone ]`** button and file picker in `MainActivity` allowing the Android user to stage any documents, photos, or videos.
+     * Integrated Android system Share Sheet support via `ACTION_SEND` and `ACTION_SEND_MULTIPLE` intent filters in `AndroidManifest.xml`—sharing files from Samsung Gallery or Google Photos stages them automatically for instant download on iPhone!
+   - **Interactive Web Portal UI on Android**:
+     * Serves complete glassmorphism dark-theme Web Portal on `http://airbeam.local:8080`.
+     * Features prominent **`[ ⚡ Download iOS Shortcut (1-Click) ]`** button linking to the official Apple-signed iCloud Shortcut (`https://www.icloud.com/shortcuts/64fb6a4308124708937953f6fd8f9f62`), plus `GET /airbeam.shortcut` redirect.
+     * In-browser live upload dropzone with real-time speed meter (MB/s), MB counter, and percentage bar.
+     * Real-time clipboard synchronization (`GET /api/clipboard` and `POST /api/clipboard`) with Android toast alerts.
+   - **Android App UI Updates**:
+     * Added "Web Portal & iOS AirDrop" card to `activity_main.xml` with `http://airbeam.local:8080`, live copy button, and high-contrast camera-scannable QR code generated using ZXing `QRCodeWriter`.
+     * Wrapped activity layout in `NestedScrollView` for responsive, fluid scrolling across all phone and tablet screen dimensions.
+   - **Production Release APK**:
+     * Bumped version to `v6.0` (`versionCode 10`, `versionName 6.0`) in `android-app/app/build.gradle`.
+     * Compiled and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease`).
+     * Output APKs placed in `release/AirBeam-v6.0-Receiver.apk`, `release/AirBeam-Receiver.apk`, and `release/AirBeam-v5.0-Receiver.apk`.

@@ -22,6 +22,15 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.view.View;
 import android.widget.Button;
+import androidx.annotation.Nullable;
+import android.util.Log;
+import android.widget.ImageView;
+import android.graphics.Bitmap;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.google.zxing.common.BitMatrix;
+import android.provider.OpenableColumns;
+import android.database.Cursor;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -81,6 +90,15 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     private ProgressBar pbActiveTransfer;
     private TextView tvActiveProgressDetail;
     private TextView tvActivePercent;
+
+    // Web Portal & iOS AirDrop
+    private TextView tvPortalUrl;
+    private Button btnCopyPortalUrl;
+    private ImageView ivPortalQr;
+    private TextView tvStagedCount;
+    private Button btnStageFiles;
+    private Button btnClearStaged;
+    private static final int REQUEST_CODE_STAGE_FILES = 202;
 
     private final BroadcastReceiver clipboardReceiver = new BroadcastReceiver() {
         @Override
@@ -145,6 +163,31 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         tvActivePercent = findViewById(R.id.tvActivePercent);
 
         Button btnCopySsid = findViewById(R.id.btnCopySsid);
+        // Web Portal & iOS AirDrop Views
+        tvPortalUrl = findViewById(R.id.tvPortalUrl);
+        btnCopyPortalUrl = findViewById(R.id.btnCopyPortalUrl);
+        ivPortalQr = findViewById(R.id.ivPortalQr);
+        tvStagedCount = findViewById(R.id.tvStagedCount);
+        btnStageFiles = findViewById(R.id.btnStageFiles);
+        btnClearStaged = findViewById(R.id.btnClearStaged);
+
+        if (btnCopyPortalUrl != null) {
+            btnCopyPortalUrl.setOnClickListener(v -> copyToClipboard("Web Portal URL", "http://airbeam.local:8080"));
+        }
+        if (btnStageFiles != null) {
+            btnStageFiles.setOnClickListener(v -> openFilePickerToStage());
+        }
+        if (btnClearStaged != null) {
+            btnClearStaged.setOnClickListener(v -> {
+                FileServerService.clearStagedFiles();
+                updateStagedFilesUi();
+                Toast.makeText(this, "Staged files cleared", Toast.LENGTH_SHORT).show();
+            });
+        }
+        generatePortalQrCode();
+        updateStagedFilesUi();
+        handleShareIntent(getIntent());
+
         Button btnCopyPass = findViewById(R.id.btnCopyPass);
         if (btnCopySsid != null) {
             btnCopySsid.setOnClickListener(v -> copyToClipboard("SSID", tvHotspotSsid != null ? tvHotspotSsid.getText().toString() : "airbeam"));
@@ -388,7 +431,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                 if (ip == null || ip.equals("127.0.0.1")) {
                     ip = "10.150.131.50";
                 }
-                tvIpAddress.setText("http://" + ip + ":" + FileServerService.PORT);
+                tvIpAddress.setText("http://" + ip + ":" + FileServerService.NIO_PORT);
                 if (ip.startsWith("192.168.43.")) {
                     tvStatus.setText("🚀 Tablet Hotspot Active (airbeam) — 50-95+ MB/s");
                     tvStatus.setTextColor(0xFF38BDF8);
@@ -497,6 +540,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         if (isBound) {
             updateServerStatus(true);
         }
+        updateStagedFilesUi();
         syncHotspotState();
 
         IntentFilter filter = new IntentFilter("com.airbeam.CLIPBOARD_RECEIVED");
@@ -517,6 +561,140 @@ public class MainActivity extends AppCompatActivity implements FileServerService
             unregisterReceiver(clipboardReceiver);
         } catch (Exception ignored) {}
         super.onPause();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleShareIntent(intent);
+    }
+
+    private void generatePortalQrCode() {
+        if (ivPortalQr == null) return;
+        new Thread(() -> {
+            try {
+                String url = "http://airbeam.local:" + FileServerService.PORT;
+                QRCodeWriter writer = new QRCodeWriter();
+                BitMatrix bitMatrix = writer.encode(
+                        url,
+                        BarcodeFormat.QR_CODE,
+                        512,
+                        512
+                );
+                int width = bitMatrix.getWidth();
+                int height = bitMatrix.getHeight();
+                Bitmap bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                for (int x = 0; x < width; x++) {
+                    for (int y = 0; y < height; y++) {
+                        bmp.setPixel(x, y, bitMatrix.get(x, y) ? 0xFF0B1120 : 0xFFFFFFFF);
+                    }
+                }
+                runOnUiThread(() -> {
+                    if (ivPortalQr != null) {
+                        ivPortalQr.setImageBitmap(bmp);
+                    }
+                });
+            } catch (Exception e) {
+                Log.e("MainActivity", "Error generating QR code", e);
+            }
+        }).start();
+    }
+
+    private void openFilePickerToStage() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(intent, REQUEST_CODE_STAGE_FILES);
+        } catch (Exception e) {
+            Toast.makeText(this, "Cannot open file picker: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CODE_STAGE_FILES && resultCode == RESULT_OK && data != null) {
+            int added = 0;
+            if (data.getClipData() != null) {
+                int count = data.getClipData().getItemCount();
+                for (int i = 0; i < count; i++) {
+                    Uri uri = data.getClipData().getItemAt(i).getUri();
+                    if (stageUri(uri)) added++;
+                }
+            } else if (data.getData() != null) {
+                if (stageUri(data.getData())) added++;
+            }
+            updateStagedFilesUi();
+            if (added > 0) {
+                Toast.makeText(this, "Staged " + added + " file(s) for iPhone! Download at http://airbeam.local:8080", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    private boolean stageUri(Uri uri) {
+        if (uri == null) return false;
+        String displayName = "file_" + System.currentTimeMillis();
+        long fileSize = 0;
+        String mime = getContentResolver().getType(uri);
+
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (nameIndex != -1) {
+                    String n = cursor.getString(nameIndex);
+                    if (n != null && !n.isEmpty()) displayName = n;
+                }
+                if (sizeIndex != -1) {
+                    fileSize = cursor.getLong(sizeIndex);
+                }
+            }
+        } catch (Exception ignored) {}
+
+        int index = FileServerService.getStagedFiles().size();
+        StagedFile stagedFile = new StagedFile(index, displayName, fileSize, uri, mime);
+        FileServerService.addStagedFile(stagedFile);
+        return true;
+    }
+
+    private void handleShareIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        String type = intent.getType();
+        if (Intent.ACTION_SEND.equals(action) && type != null) {
+            Uri streamUri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (streamUri != null) {
+                stageUri(streamUri);
+                updateStagedFilesUi();
+                Toast.makeText(this, "Staged 1 file for iPhone! Open http://airbeam.local:8080", Toast.LENGTH_LONG).show();
+            }
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action) && type != null) {
+            ArrayList<Uri> uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (uris != null && !uris.isEmpty()) {
+                int count = 0;
+                for (Uri u : uris) {
+                    if (stageUri(u)) count++;
+                }
+                updateStagedFilesUi();
+                Toast.makeText(this, "Staged " + count + " files for iPhone! Open http://airbeam.local:8080", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    private void updateStagedFilesUi() {
+        runOnUiThread(() -> {
+            int count = FileServerService.getStagedFiles().size();
+            if (tvStagedCount != null) {
+                if (count == 0) {
+                    tvStagedCount.setText("Files staged for iPhone: 0");
+                } else {
+                    tvStagedCount.setText("Files staged for iPhone: " + count + " file" + (count == 1 ? "" : "s") + " ready");
+                }
+            }
+        });
     }
 
     @Override

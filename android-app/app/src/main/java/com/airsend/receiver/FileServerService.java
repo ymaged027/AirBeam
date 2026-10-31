@@ -35,6 +35,13 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
+
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -88,6 +95,20 @@ public class FileServerService extends Service {
     private final AtomicBoolean isConnectingHotspot = new AtomicBoolean(false);
     private ConnectivityManager.NetworkCallback activeNetworkCallback;
     private final ConcurrentHashMap<Long, ActiveTransferSession> activeSessions = new ConcurrentHashMap<>();
+    private AirBeamMdnsResponder mdnsResponder;
+    private static final List<StagedFile> stagedFiles = Collections.synchronizedList(new ArrayList<>());
+
+    public static void addStagedFile(StagedFile file) {
+        stagedFiles.add(file);
+    }
+
+    public static void clearStagedFiles() {
+        stagedFiles.clear();
+    }
+
+    public static List<StagedFile> getStagedFiles() {
+        return new ArrayList<>(stagedFiles);
+    }
     private volatile String connectionMode = "TABLET_HOTSPOT";
 
     private PowerManager.WakeLock wakeLock;
@@ -217,6 +238,8 @@ public class FileServerService extends Service {
         createNotificationChannel();
         startForeground(NOTIF_ID, createNotification("AirBeam V2 Active", "Ready to receive (Port 7777 / 8080)"));
         threadPool = Executors.newCachedThreadPool();
+        mdnsResponder = new AirBeamMdnsResponder(this, PORT);
+        mdnsResponder.start();
         startHttpServer();
         startNioServer();
         startUdpBeaconListener();
@@ -938,26 +961,50 @@ public class FileServerService extends Service {
             }
 
             if ("GET".equalsIgnoreCase(method)) {
-                if (uri.startsWith("/info") || uri.startsWith("/ping")) {
+                if (uri.startsWith("/info") || uri.startsWith("/ping") || uri.startsWith("/api/ping")) {
                     String deviceName = Build.MANUFACTURER + " " + Build.MODEL;
-                    String json = "{\"name\":\"" + deviceName + "\",\"port\":" + PORT + ",\"nio_port\":" + NIO_PORT + ",\"status\":\"ready\"}";
+                    String json = "{\"name\":\"" + deviceName + "\",\"port\":" + PORT + ",\"nio_port\":" + NIO_PORT + ",\"status\":\"ready\",\"mdns\":\"airbeam.local\"}";
                     byte[] body = json.getBytes(StandardCharsets.UTF_8);
                     sendResponse(out, 200, "OK", "application/json", body);
+                } else if (uri.startsWith("/airbeam.shortcut")) {
+                    String redirect = "HTTP/1.1 302 Found\r\n"
+                            + "Location: " + WebPortalHtml.ICLOUD_SHORTCUT_URL + "\r\n"
+                            + "Content-Length: 0\r\n"
+                            + "Connection: close\r\n\r\n";
+                    out.write(redirect.getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                } else if (uri.startsWith("/api/files")) {
+                    JSONArray array = new JSONArray();
+                    synchronized (stagedFiles) {
+                        for (StagedFile f : stagedFiles) {
+                            array.put(f.toJson());
+                        }
+                    }
+                    byte[] body = array.toString().getBytes(StandardCharsets.UTF_8);
+                    sendResponse(out, 200, "OK", "application/json", body);
+                } else if (uri.startsWith("/download-all.zip")) {
+                    handleDownloadAllZip(out);
+                } else if (uri.startsWith("/download")) {
+                    handleDownload(uri, out);
+                } else if (uri.startsWith("/api/clipboard")) {
+                    handleGetClipboard(out);
                 } else {
-                    String html = "<html><body style='font-family:sans-serif;padding:20px;text-align:center;background:#0f172a;color:#fff;'>"
-                            + "<h2>AirBeam V2 Receiver</h2>"
-                            + "<p>Device: " + Build.MANUFACTURER + " " + Build.MODEL + "</p>"
-                            + "<p style='color:#10b981;'>Ready for 50-95+ MB/s transfers!</p>"
-                            + "</body></html>";
+                    String html = WebPortalHtml.getHtml(Build.MANUFACTURER + " " + Build.MODEL, String.valueOf(PORT));
                     byte[] body = html.getBytes(StandardCharsets.UTF_8);
-                    sendResponse(out, 200, "OK", "text/html", body);
+                    sendResponse(out, 200, "OK", "text/html; charset=utf-8", body);
                 }
                 return;
             }
 
-            if ("POST".equalsIgnoreCase(method) && uri.startsWith("/upload")) {
-                handleHttpUpload(uri, headers, bis, out);
-                return;
+            if ("POST".equalsIgnoreCase(method)) {
+                if (uri.startsWith("/api/clipboard")) {
+                    handlePostClipboard(headers, bis, out);
+                    return;
+                }
+                if (uri.startsWith("/upload")) {
+                    handleHttpUpload(uri, headers, bis, out);
+                    return;
+                }
             }
 
             sendResponse(out, 404, "Not Found", "text/plain", "Not Found".getBytes(StandardCharsets.UTF_8));
@@ -968,8 +1015,139 @@ public class FileServerService extends Service {
         }
     }
 
+    private void handleGetClipboard(OutputStream out) throws IOException {
+        final String[] clipResult = new String[]{""};
+        CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip().getItemCount() > 0) {
+                    CharSequence cs = cm.getPrimaryClip().getItemAt(0).getText();
+                    if (cs != null) clipResult[0] = cs.toString();
+                }
+            } catch (Exception ignored) {}
+            latch.countDown();
+        });
+        try { latch.await(300, TimeUnit.MILLISECONDS); } catch (Exception ignored) {}
+
+        JSONObject json = new JSONObject();
+        try {
+            json.put("text", clipResult[0]);
+        } catch (Exception ignored) {}
+        sendResponse(out, 200, "OK", "application/json", json.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void handlePostClipboard(Map<String, String> headers, InputStream in, OutputStream out) throws IOException {
+        long len = 0;
+        if (headers.containsKey("content-length")) {
+            try { len = Long.parseLong(headers.get("content-length")); } catch (Exception ignored) {}
+        }
+        if (len <= 0 || len > 1024 * 1024) len = 4096;
+        byte[] b = new byte[(int) len];
+        int read = in.read(b);
+        String text = "";
+        if (read > 0) {
+            String raw = new String(b, 0, read, StandardCharsets.UTF_8);
+            try {
+                JSONObject json = new JSONObject(raw);
+                text = json.optString("text", raw);
+            } catch (Exception ignored) {
+                text = raw;
+            }
+        }
+        if (!text.isEmpty()) {
+            handleIncomingClipboard(text);
+        }
+        sendResponse(out, 200, "OK", "application/json", "{\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void handleDownload(String uri, OutputStream out) throws IOException {
+        int fileIndex = 0;
+        try {
+            if (uri.contains("id=")) {
+                String idStr = uri.substring(uri.indexOf("id=") + 3);
+                int amp = idStr.indexOf('&');
+                if (amp != -1) idStr = idStr.substring(0, amp);
+                fileIndex = Integer.parseInt(idStr);
+            } else if (uri.startsWith("/download/")) {
+                fileIndex = Integer.parseInt(uri.substring("/download/".length()));
+            }
+        } catch (Exception ignored) {}
+
+        StagedFile staged = null;
+        synchronized (stagedFiles) {
+            if (fileIndex >= 0 && fileIndex < stagedFiles.size()) {
+                staged = stagedFiles.get(fileIndex);
+            }
+        }
+
+        if (staged == null) {
+            sendResponse(out, 404, "Not Found", "text/plain", "File not found".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+
+        try (InputStream fis = staged.openInputStream(this)) {
+            String safeName = staged.name.replace("\"", "_");
+            String headers = "HTTP/1.1 200 OK\r\n"
+                    + "Content-Type: " + staged.mimeType + "\r\n"
+                    + (staged.size > 0 ? "Content-Length: " + staged.size + "\r\n" : "")
+                    + "Content-Disposition: attachment; filename=\"" + safeName + "\"\r\n"
+                    + "Access-Control-Allow-Origin: *\r\n"
+                    + "Connection: close\r\n\r\n";
+            out.write(headers.getBytes(StandardCharsets.UTF_8));
+
+            byte[] buf = new byte[1048576];
+            int r;
+            while ((r = fis.read(buf)) != -1) {
+                out.write(buf, 0, r);
+            }
+            out.flush();
+        } catch (Exception e) {
+            Log.e(TAG, "Error streaming download: " + staged.name, e);
+        }
+    }
+
+    private void handleDownloadAllZip(OutputStream out) throws IOException {
+        List<StagedFile> copy;
+        synchronized (stagedFiles) {
+            copy = new ArrayList<>(stagedFiles);
+        }
+        if (copy.isEmpty()) {
+            sendResponse(out, 404, "Not Found", "text/plain", "No files staged".getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+
+        String zipName = "AirBeam_Files_" + System.currentTimeMillis() + ".zip";
+        String headers = "HTTP/1.1 200 OK\r\n"
+                + "Content-Type: application/zip\r\n"
+                + "Content-Disposition: attachment; filename=\"" + zipName + "\"\r\n"
+                + "Access-Control-Allow-Origin: *\r\n"
+                + "Connection: close\r\n\r\n";
+        out.write(headers.getBytes(StandardCharsets.UTF_8));
+
+        try (ZipOutputStream zos = new ZipOutputStream(out)) {
+            byte[] buf = new byte[1048576];
+            for (StagedFile sf : copy) {
+                try (InputStream is = sf.openInputStream(this)) {
+                    ZipEntry entry = new ZipEntry(sf.name);
+                    zos.putNextEntry(entry);
+                    int r;
+                    while ((r = is.read(buf)) != -1) {
+                        zos.write(buf, 0, r);
+                    }
+                    zos.closeEntry();
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed adding entry to zip: " + sf.name, e);
+                }
+            }
+            zos.finish();
+            zos.flush();
+        }
+    }
+
     private void handleHttpUpload(String uri, Map<String, String> headers, InputStream in, OutputStream out) throws IOException {
-        String fileName = "received_file_" + System.currentTimeMillis();
+        acquireWakeAndWifiLocks();
+        String fileName = null;
         long contentLength = -1;
 
         if (headers.containsKey("content-length")) {
@@ -978,12 +1156,72 @@ public class FileServerService extends Service {
             } catch (Exception ignored) {}
         }
 
-        if (headers.containsKey("x-file-name")) {
+        // 1. Check query parameters ?filename= or ?name=
+        if (uri.contains("filename=")) {
+            String fn = uri.substring(uri.indexOf("filename=") + 9);
+            int amp = fn.indexOf('&');
+            if (amp != -1) fn = fn.substring(0, amp);
+            try { fileName = URLDecoder.decode(fn, "UTF-8"); } catch (Exception ignored) { fileName = fn; }
+        } else if (uri.contains("name=")) {
+            String fn = uri.substring(uri.indexOf("name=") + 5);
+            int amp = fn.indexOf('&');
+            if (amp != -1) fn = fn.substring(0, amp);
+            try { fileName = URLDecoder.decode(fn, "UTF-8"); } catch (Exception ignored) { fileName = fn; }
+        }
+
+        // 2. Check x-file-name header
+        if (fileName == null && headers.containsKey("x-file-name")) {
             try {
                 fileName = URLDecoder.decode(headers.get("x-file-name"), "UTF-8");
             } catch (Exception ignored) {
                 fileName = headers.get("x-file-name");
             }
+        }
+
+        // 3. Check Content-Disposition header
+        if (fileName == null && headers.containsKey("content-disposition")) {
+            String disp = headers.get("content-disposition");
+            int fnIdx = disp.indexOf("filename=");
+            if (fnIdx != -1) {
+                String fn = disp.substring(fnIdx + 9).trim();
+                if (fn.startsWith("\"") && fn.length() > 1) {
+                    fn = fn.substring(1, fn.indexOf('"', 1));
+                }
+                fileName = fn;
+            }
+        }
+
+        // 4. Multipart parsing if content-type is multipart/form-data
+        String contentType = headers.get("content-type");
+        boolean isMultipart = contentType != null && contentType.toLowerCase().contains("multipart/form-data");
+        byte[] multipartBoundary = null;
+        if (isMultipart) {
+            int bIdx = contentType.toLowerCase().indexOf("boundary=");
+            if (bIdx != -1) {
+                String bStr = contentType.substring(bIdx + 9).trim();
+                if (bStr.startsWith("\"") && bStr.endsWith("\"")) {
+                    bStr = bStr.substring(1, bStr.length() - 1);
+                }
+                multipartBoundary = ("--" + bStr).getBytes(StandardCharsets.US_ASCII);
+            }
+            String line;
+            while ((line = readLine(in)) != null) {
+                if (line.isEmpty()) break;
+                if (line.toLowerCase().startsWith("content-disposition:")) {
+                    int fnIdx = line.indexOf("filename=");
+                    if (fnIdx != -1) {
+                        String fn = line.substring(fnIdx + 9).trim();
+                        if (fn.startsWith("\"") && fn.length() > 1) {
+                            fn = fn.substring(1, fn.indexOf('"', 1));
+                        }
+                        if (fileName == null) fileName = fn;
+                    }
+                }
+            }
+        }
+
+        if (fileName == null || fileName.trim().isEmpty()) {
+            fileName = "received_ios_" + System.currentTimeMillis();
         }
 
         fileName = fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
@@ -997,6 +1235,7 @@ public class FileServerService extends Service {
         if (transferListener != null) {
             transferListener.onTransferStart(item);
         }
+        updateNotification("Receiving: " + targetFile.getName(), "AirBeam iOS / Web Transfer");
 
         try (FileOutputStream fos = new FileOutputStream(targetFile);
              BufferedOutputStream bos = new BufferedOutputStream(fos, 1048576)) {
@@ -1005,8 +1244,9 @@ public class FileServerService extends Service {
             long bytesReadTotal = 0;
             int read;
             long lastProgressUpdate = 0;
+            long lastBytesDone = 0;
 
-            if (contentLength > 0) {
+            if (contentLength > 0 && !isMultipart) {
                 while (bytesReadTotal < contentLength) {
                     int toRead = (int) Math.min(buffer.length, contentLength - bytesReadTotal);
                     read = in.read(buffer, 0, toRead);
@@ -1015,22 +1255,51 @@ public class FileServerService extends Service {
                     bytesReadTotal += read;
 
                     long now = System.currentTimeMillis();
-                    if (now - lastProgressUpdate > 500) {
+                    if (now - lastProgressUpdate > 300) {
+                        long dt = now - lastProgressUpdate;
+                        double speed = dt > 0 ? ((bytesReadTotal - lastBytesDone) / (1024.0 * 1024.0)) / (dt / 1000.0) : 0.0;
                         item.setTransferredBytes(bytesReadTotal);
+                        item.setSpeedMBps(speed);
                         if (transferListener != null) transferListener.onTransferProgress(item);
+
+                        Intent progIntent = new Intent("com.airbeam.TRANSFER_PROGRESS");
+                        progIntent.setPackage(getPackageName());
+                        progIntent.putExtra("filename", targetFile.getName());
+                        progIntent.putExtra("transferred", bytesReadTotal);
+                        progIntent.putExtra("total", contentLength);
+                        progIntent.putExtra("speed_mbps", speed);
+                        sendBroadcast(progIntent);
+
                         lastProgressUpdate = now;
+                        lastBytesDone = bytesReadTotal;
                     }
                 }
             } else {
                 while ((read = in.read(buffer)) != -1) {
                     bos.write(buffer, 0, read);
                     bytesReadTotal += read;
+
+                    long now = System.currentTimeMillis();
+                    if (now - lastProgressUpdate > 300) {
+                        long dt = now - lastProgressUpdate;
+                        double speed = dt > 0 ? ((bytesReadTotal - lastBytesDone) / (1024.0 * 1024.0)) / (dt / 1000.0) : 0.0;
+                        item.setTransferredBytes(bytesReadTotal);
+                        item.setSpeedMBps(speed);
+                        if (transferListener != null) transferListener.onTransferProgress(item);
+                        lastProgressUpdate = now;
+                        lastBytesDone = bytesReadTotal;
+                    }
                 }
             }
 
             bos.flush();
-            item.setTransferredBytes(bytesReadTotal);
-            item.setTotalBytes(bytesReadTotal);
+
+            if (isMultipart && multipartBoundary != null && targetFile.length() > multipartBoundary.length) {
+                stripTrailingBoundary(targetFile, multipartBoundary);
+            }
+
+            item.setTransferredBytes(targetFile.length());
+            item.setTotalBytes(targetFile.length());
             item.setStatus(TransferItem.Status.COMPLETED);
             item.setSavedPath(targetFile.getAbsolutePath());
 
@@ -1039,13 +1308,54 @@ public class FileServerService extends Service {
             if (transferListener != null) {
                 transferListener.onTransferComplete(item);
             }
-            sendResponse(out, 200, "OK", "text/plain", ("OK: " + targetFile.getName()).getBytes(StandardCharsets.UTF_8));
+            updateNotification("Received: " + targetFile.getName(), "Saved to Downloads");
+
+            String resp = "{\"status\":\"ok\",\"filename\":\"" + targetFile.getName() + "\"}";
+            sendResponse(out, 200, "OK", "application/json", resp.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             item.setStatus(TransferItem.Status.FAILED);
             if (transferListener != null) {
                 transferListener.onTransferFailed(item, e.getMessage());
             }
             sendResponse(out, 500, "Internal Server Error", "text/plain", e.getMessage().getBytes(StandardCharsets.UTF_8));
+        } finally {
+            releaseWakeAndWifiLocks();
+        }
+    }
+
+    private void stripTrailingBoundary(File file, byte[] boundary) {
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+            long fileLen = raf.length();
+            int checkLen = Math.min((int) fileLen, boundary.length + 128);
+            if (checkLen <= 0) return;
+            byte[] tail = new byte[checkLen];
+            raf.seek(fileLen - checkLen);
+            raf.readFully(tail);
+
+            for (int i = 0; i <= checkLen - boundary.length; i++) {
+                boolean match = true;
+                for (int j = 0; j < boundary.length; j++) {
+                    if (tail[i + j] != boundary[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    int cutPos = i;
+                    if (cutPos >= 2 && tail[cutPos - 2] == '\r' && tail[cutPos - 1] == '\n') {
+                        cutPos -= 2;
+                    } else if (cutPos >= 1 && tail[cutPos - 1] == '\n') {
+                        cutPos -= 1;
+                    }
+                    long newLen = (fileLen - checkLen) + cutPos;
+                    if (newLen >= 0) {
+                        raf.setLength(newLen);
+                    }
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "stripTrailingBoundary note: " + e.getMessage());
         }
     }
 
@@ -1236,6 +1546,11 @@ public class FileServerService extends Service {
             try {
                 if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
             } catch (Exception ignored) {}
+        }
+
+        if (mdnsResponder != null) {
+            try { mdnsResponder.stop(); } catch (Exception ignored) {}
+            mdnsResponder = null;
         }
 
         super.onDestroy();
