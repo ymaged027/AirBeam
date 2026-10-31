@@ -158,6 +158,52 @@ public class WebPortalHtml {
 "            text-decoration: none;\n" +
 "            flex-shrink: 0;\n" +
 "        }\n" +
+"        .device-switcher-box {\n" +
+"            background: rgba(30, 41, 59, 0.7);\n" +
+"            border: 1px solid rgba(56, 189, 248, 0.3);\n" +
+"            border-radius: 14px;\n" +
+"            padding: 10px 14px;\n" +
+"            margin-bottom: 16px;\n" +
+"            display: flex;\n" +
+"            flex-direction: column;\n" +
+"            gap: 8px;\n" +
+"        }\n" +
+"        .switcher-header {\n" +
+"            font-size: 11px;\n" +
+"            text-transform: uppercase;\n" +
+"            letter-spacing: 0.5px;\n" +
+"            color: var(--text-secondary);\n" +
+"            font-weight: 700;\n" +
+"            display: flex;\n" +
+"            align-items: center;\n" +
+"            justify-content: space-between;\n" +
+"        }\n" +
+"        .pill-group {\n" +
+"            display: flex;\n" +
+"            gap: 8px;\n" +
+"        }\n" +
+"        .device-pill {\n" +
+"            flex: 1;\n" +
+"            padding: 10px 8px;\n" +
+"            border-radius: 10px;\n" +
+"            border: 1px solid rgba(255, 255, 255, 0.1);\n" +
+"            background: rgba(15, 23, 42, 0.6);\n" +
+"            color: var(--text-secondary);\n" +
+"            font-size: 13px;\n" +
+"            font-weight: 600;\n" +
+"            cursor: pointer;\n" +
+"            display: flex;\n" +
+"            align-items: center;\n" +
+"            justify-content: center;\n" +
+"            gap: 6px;\n" +
+"            transition: all 0.2s ease;\n" +
+"        }\n" +
+"        .device-pill.active {\n" +
+"            background: rgba(56, 189, 248, 0.15);\n" +
+"            border-color: var(--accent-cyan);\n" +
+"            color: #fff;\n" +
+"            box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);\n" +
+"        }\n" +
 "        .progress-box {\n" +
 "            display: none;\n" +
 "            background: rgba(15, 23, 42, 0.8);\n" +
@@ -226,6 +272,24 @@ public class WebPortalHtml {
 "        <div class=\"badge\">● DIRECT 5GHz WI-FI PIPE (50-95+ MB/s)</div>\n" +
 "    </div>\n" +
 "\n" +
+"    <!-- ⚡ AirBeam Multi-Device Switcher -->\n" +
+"    <div id=\"deviceSwitcherBar\" class=\"device-switcher-box\" style=\"display:none;\">\n" +
+"        <div class=\"switcher-header\">\n" +
+"            <span>AirBeam Connected Devices</span>\n" +
+"            <span id=\"targetStatusText\" style=\"color:var(--accent-cyan);\">● Direct Wi-Fi</span>\n" +
+"        </div>\n" +
+"        <div class=\"pill-group\">\n" +
+"            <button id=\"pillTablet\" class=\"device-pill active\" onclick=\"switchTargetDevice('tablet')\">\n" +
+"                <span>📱</span>\n" +
+"                <span id=\"pillTabletLabel\">Samsung Tablet</span>\n" +
+"            </button>\n" +
+"            <button id=\"pillPC\" class=\"device-pill\" onclick=\"switchTargetDevice('pc')\">\n" +
+"                <span>💻</span>\n" +
+"                <span id=\"pillPCLabel\">Windows PC</span>\n" +
+"            </button>\n" +
+"        </div>\n" +
+"    </div>\n" +
+"\n" +
 "    <!-- ⚡ Live Active Transfer Card with STOP / RESUME and CANCEL -->\n" +
 "    <div id=\"liveTransferCard\" class=\"card\" style=\"display:none;border:1.5px solid #38BDF8;background:linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.95) 100%);box-shadow:0 8px 24px rgba(56,189,248,0.2);\">\n" +
 "        <div class=\"card-header\" style=\"margin-bottom:8px;\">\n" +
@@ -269,7 +333,7 @@ public class WebPortalHtml {
 "    <!-- Staged Files for iPhone -->\n" +
 "    <div class=\"card\">\n" +
 "        <div class=\"card-header\">\n" +
-"            <div class=\"card-title\">📥 Files from Android</div>\n" +
+"            <div id=\"stagedCardTitle\" class=\"card-title\">📥 Files from Android</div>\n" +
 "            <span id=\"fileCountBadge\" class=\"badge\" style=\"margin-top:0;\">0 files</span>\n" +
 "        </div>\n" +
 "        <div id=\"fileListContainer\">\n" +
@@ -281,7 +345,7 @@ public class WebPortalHtml {
 "    <!-- Upload Dropzone (iPhone to Android) -->\n" +
 "    <div class=\"card\">\n" +
 "        <div class=\"card-header\">\n" +
-"            <div class=\"card-title\">📤 Send Files to Android</div>\n" +
+"            <div id=\"uploadCardTitle\" class=\"card-title\">📤 Send Files to Android</div>\n" +
 "        </div>\n" +
 "        <div class=\"dropzone\" onclick=\"document.getElementById('fileInput').click()\">\n" +
 "            <div style=\"font-size:36px;margin-bottom:8px;\">📁</div>\n" +
@@ -324,6 +388,72 @@ public class WebPortalHtml {
 "    <script>\n" +
 "        let stagedFiles = [];\n" +
 "        let currentAndroidClipboard = '';\n" +
+"        let currentTargetDevice = 'tablet';\n" +
+"        let detectedDevices = null;\n" +
+"\n" +
+"        function getTargetBaseUrl() {\n" +
+"            if (!detectedDevices || !detectedDevices.peer) return '';\n" +
+"            if (detectedDevices.current && detectedDevices.current.type === 'tablet' && currentTargetDevice === 'pc') {\n" +
+"                return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);\n" +
+"            }\n" +
+"            if (detectedDevices.current && detectedDevices.current.type === 'pc' && currentTargetDevice === 'tablet') {\n" +
+"                return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);\n" +
+"            }\n" +
+"            return '';\n" +
+"        }\n" +
+"\n" +
+"        async function loadDevices() {\n" +
+"            try {\n" +
+"                const res = await fetch('/api/devices');\n" +
+"                if (!res.ok) return;\n" +
+"                detectedDevices = await res.json();\n" +
+"                const bar = document.getElementById('deviceSwitcherBar');\n" +
+"                if (detectedDevices && detectedDevices.peer) {\n" +
+"                    bar.style.display = 'flex';\n" +
+"                    const tabletName = (detectedDevices.current && detectedDevices.current.type === 'tablet') ? detectedDevices.current.name : (detectedDevices.peer.name || 'Samsung Tablet');\n" +
+"                    const pcName = (detectedDevices.current && detectedDevices.current.type === 'pc') ? detectedDevices.current.name : (detectedDevices.peer.name || 'Windows PC');\n" +
+"                    document.getElementById('pillTabletLabel').innerText = tabletName;\n" +
+"                    document.getElementById('pillPCLabel').innerText = pcName;\n" +
+"                    const saved = localStorage.getItem('airbeam_target_device');\n" +
+"                    if (saved === 'pc' || saved === 'tablet') {\n" +
+"                        switchTargetDevice(saved, false);\n" +
+"                    }\n" +
+"                }\n" +
+"            } catch (e) {}\n" +
+"        }\n" +
+"\n" +
+"        function switchTargetDevice(target, save) {\n" +
+"            if (save === undefined) save = true;\n" +
+"            currentTargetDevice = target;\n" +
+"            if (save) {\n" +
+"                try { localStorage.setItem('airbeam_target_device', target); } catch (e) {}\n" +
+"            }\n" +
+"            const pillTablet = document.getElementById('pillTablet');\n" +
+"            const pillPC = document.getElementById('pillPC');\n" +
+"            const uploadTitle = document.getElementById('uploadCardTitle');\n" +
+"            const stagedTitle = document.getElementById('stagedCardTitle');\n" +
+"            const targetStatusText = document.getElementById('targetStatusText');\n" +
+"\n" +
+"            if (target === 'pc') {\n" +
+"                if (pillTablet) pillTablet.classList.remove('active');\n" +
+"                if (pillPC) pillPC.classList.add('active');\n" +
+"                if (uploadTitle) uploadTitle.innerText = '📤 Send Files to Windows PC';\n" +
+"                if (stagedTitle) stagedTitle.innerText = '📥 Files from Windows PC';\n" +
+"                if (targetStatusText) targetStatusText.innerText = '● Windows PC Selected';\n" +
+"                showToast('Target: Windows PC');\n" +
+"            } else {\n" +
+"                if (pillTablet) pillTablet.classList.add('active');\n" +
+"                if (pillPC) pillPC.classList.remove('active');\n" +
+"                if (uploadTitle) uploadTitle.innerText = '📤 Send Files to Android';\n" +
+"                if (stagedTitle) stagedTitle.innerText = '📥 Files from Android';\n" +
+"                if (targetStatusText) targetStatusText.innerText = '● Android Tablet Selected';\n" +
+"                showToast('Target: Samsung Tablet');\n" +
+"            }\n" +
+"            fetchFiles();\n" +
+"            fetchClipboard();\n" +
+"            checkServerTransferStatus();\n" +
+"        }\n" +
+"        let currentAndroidClipboard = '';\n" +
 "\n" +
 "        function showToast(msg) {\n" +
 "            const t = document.getElementById('toast');\n" +
@@ -334,7 +464,7 @@ public class WebPortalHtml {
 "\n" +
 "        async function fetchFiles() {\n" +
 "            try {\n" +
-"                const res = await fetch('/api/files');\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/files');\n" +
 "                stagedFiles = await res.json();\n" +
 "                renderFiles();\n" +
 "            } catch (e) {}\n" +
@@ -359,7 +489,7 @@ public class WebPortalHtml {
 "                            <div class=\"file-name\">${f.name}</div>\n" +
 "                            <div class=\"file-size\">${f.formatted_size}</div>\n" +
 "                        </div>\n" +
-"                        <a href=\"/download?id=${f.index}\" class=\"btn-download\" download=\"${f.name}\">⬇️ Download</a>\n" +
+"                        <a href=\"${getTargetBaseUrl()}/download?id=${f.index}\" class=\"btn-download\" download=\"${f.name}\">⬇️ Download</a>\n" +
 "                    </div>\n" +
 "                `;\n" +
 "            });\n" +
@@ -375,7 +505,7 @@ public class WebPortalHtml {
 "\n" +
 "        async function fetchClipboard() {\n" +
 "            try {\n" +
-"                const res = await fetch('/api/clipboard');\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/clipboard');\n" +
 "                const data = await res.json();\n" +
 "                currentAndroidClipboard = data.text || '';\n" +
 "                const el = document.getElementById('androidClipboardText');\n" +
@@ -392,7 +522,7 @@ public class WebPortalHtml {
 "            const txt = document.getElementById('txtSendClipboard').value.trim();\n" +
 "            if (!txt) return;\n" +
 "            try {\n" +
-"                const res = await fetch('/api/clipboard', {\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/clipboard', {\n" +
 "                    method: 'POST',\n" +
 "                    headers: { 'Content-Type': 'application/json' },\n" +
 "                    body: JSON.stringify({ text: txt })\n" +
@@ -420,7 +550,7 @@ public class WebPortalHtml {
 "        }\n" +
 "\n" +
 "        function downloadAllFiles() {\n" +
-"            window.location.href = '/download-all.zip';\n" +
+"            window.location.href = getTargetBaseUrl() + '/download-all.zip';\n" +
 "        }\n" +
 "\n" +
 "        let currentUploadXhr = null;\n" +
@@ -445,7 +575,7 @@ public class WebPortalHtml {
 "\n" +
 "        async function checkServerTransferStatus() {\n" +
 "            try {\n" +
-"                const res = await fetch('/api/transfer/status');\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/transfer/status');\n" +
 "                if (!res.ok) return;\n" +
 "                const data = await res.json();\n" +
 "                const card = document.getElementById('liveTransferCard');\n" +
@@ -475,7 +605,7 @@ public class WebPortalHtml {
 "\n" +
 "        async function toggleServerTransfer() {\n" +
 "            try {\n" +
-"                const res = await fetch('/api/transfer/toggle_pause', { method: 'POST' });\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/transfer/toggle_pause', { method: 'POST' });\n" +
 "                const data = await res.json();\n" +
 "                const btn = document.getElementById('btnLiveTransferStop');\n" +
 "                if (data.is_paused) {\n" +
@@ -490,7 +620,7 @@ public class WebPortalHtml {
 "\n" +
 "        async function cancelServerTransfer() {\n" +
 "            try {\n" +
-"                await fetch('/api/transfer/cancel', { method: 'POST' });\n" +
+"                await fetch(getTargetBaseUrl() + '/api/transfer/cancel', { method: 'POST' });\n" +
 "                const card = document.getElementById('liveTransferCard');\n" +
 "                if (card) card.style.display = 'none';\n" +
 "                showToast('❌ Transfer cancelled');\n" +
@@ -507,7 +637,7 @@ public class WebPortalHtml {
 "            const curFile = activeUploadFiles[activeUploadIndex];\n" +
 "            if (curFile) {\n" +
 "                try {\n" +
-"                    fetch('/upload?action=cancel&filename=' + encodeURIComponent(curFile.name), { method: 'POST' });\n" +
+"                    fetch(getTargetBaseUrl() + '/upload?action=cancel&filename=' + encodeURIComponent(curFile.name), { method: 'POST' });\n" +
 "                } catch (e) {}\n" +
 "            }\n" +
 "            document.getElementById('uploadProgressBox').style.display = 'none';\n" +
@@ -591,7 +721,7 @@ public class WebPortalHtml {
 "                        xhr.onerror = () => { currentUploadXhr = null; resolve(false); };\n" +
 "                        xhr.onabort = () => { currentUploadXhr = null; resolve(false); };\n" +
 "\n" +
-"                        const url = '/upload?filename=' + encodeURIComponent(file.name) + '&offset=' + offset + '&total=' + file.size + (isLast ? '&last=1' : '');\n" +
+"                        const url = getTargetBaseUrl() + '/upload?filename=' + encodeURIComponent(file.name) + '&offset=' + offset + '&total=' + file.size + (isLast ? '&last=1' : '');\n" +
 "                        xhr.open('POST', url, true);\n" +
 "                        xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));\n" +
 "                        xhr.setRequestHeader('x-file-offset', offset.toString());\n" +
@@ -620,9 +750,11 @@ public class WebPortalHtml {
 "                document.getElementById('fileInput').value = '';\n" +
 "            }\n" +
 "        }\n" +
+"        loadDevices();\n" +
 "        fetchFiles();\n" +
 "        fetchClipboard();\n" +
 "        checkServerTransferStatus();\n" +
+"        setInterval(loadDevices, 5000);\n" +
 "        setInterval(fetchFiles, 3000);\n" +
 "        setInterval(fetchClipboard, 5000);\n" +
 "        setInterval(checkServerTransferStatus, 1000);\n" +

@@ -1786,3 +1786,26 @@ x_tools_card.
    - **Production Release APK Rebuilt & Verified**:
      * Compiled and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 22s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,921,589` bytes).
+
+14. **iPhone to Android Full Transfer Fix & Zero-Collision Unified Portal Hub**:
+   - **Full Resolution for iPhone-to-APK Transfer Failures (`FileServerService.java`)**:
+     * **Keep-Alive EOF Deadlock Resolved**: Fixed HTTP/1.1 monolithic uploads from iOS Shortcuts and Safari that hung indefinitely waiting for stream EOF (`-1`). The server now accurately parses `Content-Length` and `Content-Disposition`, reading strictly `payloadExpected` bytes, flushing the output stream, and responding with HTTP 200 `{"status":"ok"}`.
+     * **Chunked Upload File Lock Fix**: In `handleHttpUpload`, `RandomAccessFile raf` is closed before attempting `renameTo()`, preventing scoped storage file locks on Android FUSE. Added byte-copy fallback if `renameTo()` fails on non-standard Android filesystems.
+     * **Auto File Extension Inference**: Automatically detects missing extensions from `Content-Type` (e.g. `image/jpeg` -> `.jpg`, `video/quicktime` -> `.mov`) so media is properly recognized by Android Gallery via `MediaScannerConnection`.
+     * **Real-time Transfer Controls & Notifications**: Connected transfer listener and notifications so receiving files triggers live progress, speed calculation (MB/s), and immediate gallery indexing.
+   - **Unified Multi-Device Portal Hub (`WebPortalHtml.java` & `sender.py`)**:
+     * **Universal Address Maintained (`http://airbeam.local:8080`)**: Solved portal confusion when PC, Tablet, and iPhone are on the same Wi-Fi router without changing the universal address.
+     * **Top-Level Device Switcher Bar**: Added visual device pills `[ 📱 Samsung Tablet ]` and `[ 💻 Windows PC ]` to both Android and Desktop Web Portals.
+     * **Autonomous Device Discovery via `/api/devices`**: Both PC and Android endpoints return their own metadata and discovered peer metadata. When a peer is detected, the switcher bar appears dynamically.
+     * **Dynamic Target Routing in Web UI**:
+       - Tapping a device routes file uploads, staged downloads, and clipboard synchronization directly to that device via CORS.
+       - Stores user preference in `localStorage` so reload or rescanning preserves chosen target.
+     * **CORS Preflight Support**: Added `do_OPTIONS` in `IPhonePortalHTTPHandler` (`sender.py`) and `sendCorsOk` in `FileServerService.java` to support cross-origin API calls seamlessly.
+   - **Cooperative mDNS & Collision Prevention (`desktop-sender/sender.py`)**:
+     * In `AirBeamMDNSResponder`, when the PC is on Tab 4 ("Native Android App") and the tablet is detected on the home Wi-Fi subnet, the PC yields `airbeam.local` so only the Android Tablet answers queries on UDP 5353, preventing RFC 6762 name collisions.
+     * Added distinct hostname `airbeam-pc.local` alongside `airbeam.local`.
+   - **Direct Target Priority in Ping (`desktop-sender/sender.py`)**:
+     * Fixed candidate ordering in `ping_target` so that manually entered or discovered router IPs (e.g. `192.168.1.12`) are tested first, preventing false-positive "Tablet Hotspot Not Reachable" popups when on home Wi-Fi.
+   - **Production Release APK Rebuilt & Packaged**:
+     * Rebuilt and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 14s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,923,763` bytes).

@@ -2177,6 +2177,52 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-weight: 600;
         }
         .btn-download:active { opacity: 0.8; }
+        .device-switcher-box {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 14px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .switcher-header {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .pill-group {
+            display: flex;
+            gap: 8px;
+        }
+        .device-pill {
+            flex: 1;
+            padding: 10px 8px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(15, 23, 42, 0.6);
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+        .device-pill.active {
+            background: rgba(56, 189, 248, 0.15);
+            border-color: var(--accent-cyan);
+            color: #fff;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+        }
         .progress-box {
             margin-top: 12px;
             background: rgba(15, 23, 42, 0.9);
@@ -2289,6 +2335,24 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         </a>
     </div>
 
+    <!-- ⚡ AirBeam Multi-Device Switcher -->
+    <div id="deviceSwitcherBar" class="device-switcher-box" style="display:none;">
+        <div class="switcher-header">
+            <span>AirBeam Connected Devices</span>
+            <span id="targetStatusText" style="color:var(--accent-cyan);">● Direct Wi-Fi</span>
+        </div>
+        <div class="pill-group">
+            <button id="pillPC" class="device-pill active" onclick="switchTargetDevice('pc')">
+                <span>💻</span>
+                <span id="pillPCLabel">Windows PC</span>
+            </button>
+            <button id="pillTablet" class="device-pill" onclick="switchTargetDevice('tablet')">
+                <span>📱</span>
+                <span id="pillTabletLabel">Samsung Tablet</span>
+            </button>
+        </div>
+    </div>
+
     <!-- ⚡ Live Active Transfer Card with STOP / RESUME and CANCEL -->
     <div id="liveTransferCard" class="card" style="display:none;border:1.5px solid #38BDF8;background:linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(30,41,59,0.95) 100%);box-shadow:0 8px 24px rgba(56,189,248,0.2);">
         <div class="card-title" style="margin-bottom:8px;">
@@ -2318,7 +2382,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <!-- 1. Download Files from PC Card -->
     <div class="card">
         <div class="card-title">
-            <span>📥 Files from PC</span>
+            <span id="stagedCardTitle">📥 Files from PC</span>
             <span class="badge" id="fileCountBadge">0 files</span>
         </div>
         <div id="fileListContainer" class="file-list">
@@ -2330,7 +2394,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <!-- 2. Send Files to PC Card -->
     <div class="card">
         <div class="card-title">
-            <span>📸 Send to PC</span>
+            <span id="uploadCardTitle">📸 Send to PC</span>
             <span class="badge">Atomic Part Upload</span>
         </div>
         <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">Send photos, 4K videos, or files directly to your PC at full Wi-Fi speed.</p>
@@ -2387,6 +2451,69 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <script>
         let stagedFiles = [];
         let currentPcClipboard = "";
+        let currentTargetDevice = 'pc'; // 'pc' or 'tablet'
+        let detectedDevices = null;
+
+        function getTargetBaseUrl() {
+            if (!detectedDevices || !detectedDevices.peer) return '';
+            if (currentTargetDevice === 'tablet' && detectedDevices.peer && detectedDevices.peer.type === 'tablet') {
+                return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);
+            }
+            return '';
+        }
+
+        async function loadDevices() {
+            try {
+                const res = await fetch('/api/devices');
+                if (!res.ok) return;
+                detectedDevices = await res.json();
+                const bar = document.getElementById('deviceSwitcherBar');
+                if (detectedDevices && detectedDevices.peer) {
+                    bar.style.display = 'flex';
+                    const pcName = (detectedDevices.current && detectedDevices.current.type === 'pc') ? detectedDevices.current.name : 'Windows PC';
+                    const tabletName = (detectedDevices.peer && detectedDevices.peer.type === 'tablet') ? detectedDevices.peer.name : 'Samsung Tablet';
+                    document.getElementById('pillPCLabel').innerText = pcName;
+                    document.getElementById('pillTabletLabel').innerText = tabletName;
+
+                    const saved = localStorage.getItem('airbeam_target_device');
+                    if (saved === 'pc' || saved === 'tablet') {
+                        switchTargetDevice(saved, false);
+                    }
+                }
+            } catch (e) {}
+        }
+
+        function switchTargetDevice(target, save) {
+            if (save === undefined) save = true;
+            currentTargetDevice = target;
+            if (save) {
+                try { localStorage.setItem('airbeam_target_device', target); } catch (e) {}
+            }
+            const pillPC = document.getElementById('pillPC');
+            const pillTablet = document.getElementById('pillTablet');
+            const uploadTitle = document.getElementById('uploadCardTitle');
+            const stagedTitle = document.getElementById('stagedCardTitle');
+            const targetStatusText = document.getElementById('targetStatusText');
+
+            if (target === 'tablet') {
+                if (pillPC) pillPC.classList.remove('active');
+                if (pillTablet) pillTablet.classList.add('active');
+                if (uploadTitle) uploadTitle.innerText = '📸 Send to Samsung Tablet';
+                if (stagedTitle) stagedTitle.innerText = '📥 Files from Samsung Tablet';
+                if (targetStatusText) targetStatusText.innerText = '● Samsung Tablet Selected';
+                showToast('Target: Samsung Tablet');
+            } else {
+                if (pillPC) pillPC.classList.add('active');
+                if (pillTablet) pillTablet.classList.remove('active');
+                if (uploadTitle) uploadTitle.innerText = '📸 Send to Windows PC';
+                if (stagedTitle) stagedTitle.innerText = '📥 Files from Windows PC';
+                if (targetStatusText) targetStatusText.innerText = '● Windows PC Selected';
+                showToast('Target: Windows PC');
+            }
+            fetchFiles();
+            fetchClipboard();
+            checkServerTransferStatus();
+        }
 
         function showToast(msg) {
             const t = document.getElementById('toast');
@@ -2397,7 +2524,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         async function fetchFiles() {
             try {
-                const res = await fetch('/api/files');
+                const res = await fetch(getTargetBaseUrl() + '/api/files');
                 stagedFiles = await res.json();
                 renderFiles();
             } catch (e) {
@@ -2490,7 +2617,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         async function fetchClipboard() {
             try {
-                const res = await fetch('/api/clipboard');
+                const res = await fetch(getTargetBaseUrl() + '/api/clipboard');
                 const data = await res.json();
                 currentPcClipboard = data.text || "";
                 const el = document.getElementById('pcClipboardText');
@@ -2582,7 +2709,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const txt = document.getElementById('txtSendClipboard').value.trim();
             if (!txt) return;
             try {
-                const res = await fetch('/api/clipboard', {
+                const res = await fetch(getTargetBaseUrl() + '/api/clipboard', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: txt })
@@ -2627,7 +2754,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const curFile = activeUploadFiles[activeUploadIndex];
             if (curFile) {
                 try {
-                    fetch('/upload?action=cancel&filename=' + encodeURIComponent(curFile.name), { method: 'POST' });
+                    fetch(getTargetBaseUrl() + '/upload?action=cancel&filename=' + encodeURIComponent(curFile.name), { method: 'POST' });
                 } catch (e) {}
             }
             document.getElementById('uploadProgressBox').style.display = 'none';
@@ -2802,7 +2929,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         async function checkServerTransferStatus() {
             try {
-                const res = await fetch('/api/transfer/status');
+                const res = await fetch(getTargetBaseUrl() + '/api/transfer/status');
                 if (!res.ok) return;
                 const data = await res.json();
                 const card = document.getElementById('liveTransferCard');
@@ -2832,7 +2959,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         async function toggleServerTransfer() {
             try {
-                const res = await fetch('/api/transfer/toggle_pause', { method: 'POST' });
+                const res = await fetch(getTargetBaseUrl() + '/api/transfer/toggle_pause', { method: 'POST' });
                 const data = await res.json();
                 const btn = document.getElementById('btnLiveTransferStop');
                 if (data.is_paused) {
@@ -2847,14 +2974,16 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         async function cancelServerTransfer() {
             try {
-                await fetch('/api/transfer/cancel', { method: 'POST' });
+                await fetch(getTargetBaseUrl() + '/api/transfer/cancel', { method: 'POST' });
                 const card = document.getElementById('liveTransferCard');
                 if (card) card.style.display = 'none';
                 showToast('❌ Transfer cancelled');
             } catch (e) { showToast('Cancel failed'); }
         }
 
-        // Poll files & clipboard every 3.5s
+        // Poll devices, files & clipboard
+        loadDevices();
+        setInterval(loadDevices, 5000);
         fetchFiles();
         fetchClipboard();
         checkServerTransferStatus();
@@ -2872,6 +3001,14 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
     @property
     def app(self):
         return self.server.app_instance
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
 
     def log_message(self, format, *args):
         try:
@@ -2956,6 +3093,44 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(resp)
+            return
+
+        elif clean_path in ('/api/devices', '/api/peers'):
+            tablet_ip = getattr(self.app, "target_ip", None) or getattr(self.app, "discovered_ip", None)
+            if not tablet_ip or tablet_ip.startswith("Searching") or tablet_ip.startswith("127."):
+                try:
+                    e_ip = self.app.entry_ip.get().strip()
+                    if e_ip and not e_ip.startswith("Searching") and not e_ip.startswith("127.") and len(e_ip.split('.')) == 4:
+                        tablet_ip = e_ip
+                except Exception:
+                    pass
+
+            is_valid_tablet = bool(tablet_ip and len(tablet_ip.split('.')) == 4 and not tablet_ip.startswith("127."))
+            pc_ip = getattr(self.app, "local_ip", None) or "127.0.0.1"
+            try: srv_port = self.server.server_address[1]
+            except Exception: srv_port = 8080
+
+            resp_data = {
+                "current": {
+                    "type": "pc",
+                    "name": "Windows PC",
+                    "ip": pc_ip,
+                    "port": srv_port
+                },
+                "peer": {
+                    "type": "tablet",
+                    "name": "Samsung Tablet",
+                    "ip": tablet_ip,
+                    "port": 8080
+                } if is_valid_tablet else None
+            }
+            body = json.dumps(resp_data).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         elif clean_path == '/api/transfer/status':
@@ -3792,8 +3967,29 @@ class AirBeamMDNSResponder:
                             client_ip = addr[0]
                             resp_ip = self._get_best_reply_ip(client_ip)
 
+                            # If specifically for airbeam-pc.local, always answer
+                            is_pc_query = b'airbeam-pc' in lower
+
+                            # Cooperative mDNS: If tablet is detected on LAN and user is in Native Android mode,
+                            # yield airbeam.local to tablet so there is zero collision on home Wi-Fi!
+                            should_yield = False
+                            if not is_pc_query:
+                                try:
+                                    t_ip = getattr(self.app, "target_ip", None) or getattr(self.app, "discovered_ip", None)
+                                    if not t_ip or t_ip.startswith("Searching"):
+                                        t_ip = self.app.entry_ip.get().strip() if hasattr(self.app, "entry_ip") else ""
+                                    mode_val = self.app.connection_mode.get() if hasattr(self.app, "connection_mode") else ""
+                                    if t_ip and not t_ip.startswith("Searching") and not t_ip.startswith("127.") and mode_val == "TABLET_HOTSPOT":
+                                        should_yield = True
+                                except Exception:
+                                    pass
+
+                            if should_yield:
+                                continue
+
+                            reply_label = self._build_dns_label("airbeam-pc.local") if is_pc_query else target_label
                             header = qid + struct.pack('!HHHHH', 0x8400, 0, 1, 0, 0)
-                            answer = target_label + struct.pack('!HHIH', 1, 0x8001, 120, 4) + socket.inet_aton(resp_ip)
+                            answer = reply_label + struct.pack('!HHIH', 1, 0x8001, 120, 4) + socket.inet_aton(resp_ip)
                             packet = header + answer
 
                             # Direct unicast to client
@@ -8997,11 +9193,9 @@ class AirBeamSenderApp(BaseTkApp):
             if "10.150.131.50" not in candidates:
                 candidates.append("10.150.131.50")
 
-            if target and not target.startswith("Searching"):
-                if is_on_airbeam and target.startswith("192.168.1."):
-                    candidates.append(target)
-                else:
-                    candidates.insert(0, target)
+            if target and not target.startswith("Searching") and len(target.split('.')) == 4:
+                # Prioritize testing target directly!
+                candidates.insert(0, target)
 
             found_ip = None
             found_port = None
