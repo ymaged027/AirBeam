@@ -1661,4 +1661,7 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
 5. **User Interface Enhancements**:
    - Embedded a vibrant **⚡ iOS AirDrop Share Sheet** card in the web portal (`IOS_HTML_TEMPLATE`) with 1-click shortcut install and step-by-step usage guide.
    - Added active AirDrop Shortcut badges and `⚡ iOS Shortcut` copy buttons in Option 1 (Home Wi-Fi) and Option 2 (Windows Mobile Hotspot) on the PC desktop interface.
-
+   6. **iOS 15–18 Unsigned Shortcut Policy & 30-Second Native Creator Flow**:
+   - Apple iOS 15 through 18 blocks externally downloaded `.shortcut` binary files with *"Shortcut can't be opened because it is not signed"*, having removed the old manual *"Allow Untrusted Shortcuts"* toggle.
+   - Enhanced the Web Portal with a `shortcuts://create-shortcut` 1-tap deep link, a 1-tap upload URL copy button (`http://airbeam.local:8080/upload`), and a visual 30-second guide to create the single-action workflow natively on the iPhone (permanently signed by the device's Apple ID).
+   - Added an interactive setup modal on the PC desktop interface (`show_ios_shortcut_modal`) with one-click clipboard copying and full step-by-step guidance.

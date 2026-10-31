@@ -2240,20 +2240,41 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             Beam photos, 4K videos, and files directly from your iPhone's native <strong>Share</strong> menu without opening Safari every time!
         </p>
 
-        <a href="/airbeam.shortcut" download="AirBeam to PC.shortcut" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 15px rgba(139,92,246,0.35);">
-            📥 Install AirBeam Shortcut (1-Click)
-        </a>
+        <!-- Fast Actions -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+            <a href="shortcuts://create-shortcut" class="btn" style="background:linear-gradient(135deg, #8B5CF6, #6D28D9);color:#fff;font-weight:700;box-shadow:0 4px 15px rgba(139,92,246,0.35);font-size:13px;padding:10px 8px;text-align:center;">
+                ⚡ Open Shortcuts App
+            </a>
+            <button class="btn btn-secondary" onclick="copyUploadEndpoint()" id="btnCopyEndpoint" style="font-size:13px;padding:10px 8px;border-color:rgba(139,92,246,0.4);">
+                📋 Copy Upload URL
+            </button>
+        </div>
 
-        <div style="margin-top:14px;background:rgba(15, 23, 42, 0.65);border:1px solid rgba(139, 92, 246, 0.25);border-radius:12px;padding:12px;">
-            <div style="font-size:12px;font-weight:700;color:#C084FC;margin-bottom:8px;">HOW TO USE LIKE AIRDROP:</div>
-            <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text-secondary);line-height:1.6;">
-                <li>Tap <strong>Install AirBeam Shortcut</strong> above and tap <strong>Add Shortcut</strong>.</li>
-                <li>In <strong>Photos</strong> or <strong>Files</strong>, select any photos, 4K videos, or docs.</li>
-                <li>Tap <strong>Share</strong> ➡️ Tap <strong>AirBeam to PC</strong> ⚡ (under AirDrop).</li>
-                <li>Your files beam automatically to your PC at full Wi-Fi speed!</li>
+        <div style="background:rgba(15, 23, 42, 0.75);border:1px solid rgba(139, 92, 246, 0.25);border-radius:12px;padding:14px;">
+            <div style="font-size:12px;font-weight:700;color:#C084FC;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <span>🛠️</span> 30-SECOND SETUP (Bypasses iOS Signing):
+            </div>
+            <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text-secondary);line-height:1.7;">
+                <li>Tap <strong>Open Shortcuts App</strong> above (or open <strong>Shortcuts</strong> ➡️ tap <strong>+</strong>).</li>
+                <li>Tap <strong>Shortcut Details (ⓘ)</strong> ➡️ Turn ON <strong>Show in Share Sheet</strong>.</li>
+                <li>Tap <strong>Add Action</strong> ➡️ Search and choose <strong>Get Contents of URL</strong>:
+                    <ul style="margin:4px 0;padding-left:16px;color:#F8FAFC;">
+                        <li><strong>URL</strong>: Paste the copied URL (<code style="background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:4px;color:#38BDF8;" id="codeEndpoint">http://airbeam.local:8080/upload</code>)</li>
+                        <li>Tap arrow: Method: <strong>POST</strong></li>
+                        <li>Request Body: <strong>File</strong> ➡️ Choose <strong>Shortcut Input</strong></li>
+                    </ul>
+                </li>
+                <li>Tap <strong>Done</strong>! Name it <strong>AirBeam to PC</strong> ⚡</li>
+                <li>In <strong>Photos</strong> or <strong>Files</strong>, select any media, tap <strong>Share</strong> ➡️ <strong>AirBeam to PC</strong>!</li>
             </ol>
-            <div style="margin-top:8px;font-size:11px;color:#94A3B8;display:flex;align-items:center;gap:6px;">
-                <span>🌐</span> Automatically connects via <strong>http://airbeam.local:8080</strong> on Wi-Fi or Hotspot.
+            <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(139,92,246,0.2);font-size:11px;color:#94A3B8;line-height:1.5;">
+                ℹ️ <em>Apple iOS blocks downloaded .shortcut files as "not signed". Setting up this 1 action natively in the Shortcuts app signs it with your Apple ID permanently!</em>
+            </div>
+            <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;color:#94A3B8;">🌐 Auto-connects on Wi-Fi or Hotspot</span>
+                <a href="/airbeam.shortcut" download="AirBeam to PC.shortcut" style="font-size:11px;color:#8B5CF6;text-decoration:underline;">
+                    Download .shortcut (Mac)
+                </a>
             </div>
         </div>
     </div>
@@ -2448,6 +2469,28 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 }
             } catch (e) {
                 console.error("Fetch clipboard error:", e);
+            }
+        }
+
+        function copyUploadEndpoint() {
+            const host = window.location.hostname || 'airbeam.local';
+            const port = window.location.port ? ':' + window.location.port : '';
+            const url = 'http://' + host + port + '/upload';
+            const btn = document.getElementById('btnCopyEndpoint');
+            const originalText = btn ? btn.innerText : '📋 Copy Upload URL';
+            const showSuccess = () => {
+                showToast("✅ Upload URL copied to clipboard!");
+                if (btn) {
+                    btn.innerText = "✅ Copied!";
+                    setTimeout(() => { btn.innerText = originalText; }, 2000);
+                }
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(showSuccess).catch(() => {
+                    fallbackCopy(url, showSuccess);
+                });
+            } else {
+                fallbackCopy(url, showSuccess);
             }
         }
 
@@ -7314,14 +7357,83 @@ class AirBeamSenderApp(BaseTkApp):
             pass
 
     def copy_airbeam_shortcut_url(self):
-        url = f"http://airbeam.local:{self.iphone_portal_port}/airbeam.shortcut"
+        upload_url = f"http://airbeam.local:{self.iphone_portal_port}/upload"
         self.clipboard_clear()
-        self.clipboard_append(url)
+        self.clipboard_append(upload_url)
         for btn_attr in ("btn_copy_shortcut_url", "btn_win_copy_shortcut"):
             if hasattr(self, btn_attr):
                 btn = getattr(self, btn_attr)
-                btn.config(text="Copied! ✅", fg="#10b981")
-                self.after(2000, lambda b=btn: b.config(text="⚡ iOS Shortcut", fg="#e9d5ff"))
+                btn.config(text="URL Copied! ✅", fg="#10b981")
+                self.after(2500, lambda b=btn: b.config(text="⚡ iOS Shortcut", fg="#e9d5ff"))
+        self.show_ios_shortcut_modal()
+
+    def show_ios_shortcut_modal(self):
+        upload_url = f"http://airbeam.local:{self.iphone_portal_port}/upload"
+        modal = tk.Toplevel(self)
+        modal.title("⚡ iOS AirDrop Share Sheet Setup")
+        modal.configure(bg="#0f172a")
+        modal.attributes("-topmost", True)
+        modal.geometry("540x510")
+        modal.resizable(False, False)
+        modal.transient(self)
+
+        content = tk.Frame(modal, bg="#0f172a", padx=20, pady=16)
+        content.pack(fill="both", expand=True)
+
+        tk.Label(content, text="⚡ iOS AirDrop Share Sheet Setup", bg="#0f172a", fg="#c084fc", font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(
+            content,
+            text="Beam photos & 4K videos directly from your iPhone's native Share menu straight to this PC at full Wi-Fi speed!",
+            bg="#0f172a", fg="#94a3b8", font=("Segoe UI", 9), wraplength=500, justify="left"
+        ).pack(anchor="w", pady=(0, 10))
+
+        note_box = tk.Frame(content, bg="#1e1b4b", padx=10, pady=8, highlightthickness=1, highlightbackground="#6366f1")
+        note_box.pack(fill="x", pady=(0, 10))
+        tk.Label(
+            note_box,
+            text="ℹ️ Why Apple says 'Not Signed':\nApple iOS 15–18 blocks downloaded .shortcut files. Setting up this 1 single action natively in the Shortcuts app takes 30 seconds and is permanently signed by Apple for your iPhone!",
+            bg="#1e1b4b", fg="#e0e7ff", font=("Segoe UI", 8, "bold"), justify="left"
+        ).pack(anchor="w")
+
+        guide_box = tk.Frame(content, bg="#1e293b", padx=12, pady=10, highlightthickness=1, highlightbackground="#334155")
+        guide_box.pack(fill="x", pady=(0, 12))
+
+        steps = [
+            ("1.", "Open the Shortcuts app on your iPhone and tap '+' (top right)."),
+            ("2.", "Tap Shortcut Details (ⓘ) at the bottom ➔ Turn ON 'Show in Share Sheet'."),
+            ("3.", "Tap 'Add Action' ➔ Search & choose 'Get Contents of URL'."),
+            ("4.", f"Set URL to:  {upload_url}  (Copied to your clipboard!)"),
+            ("5.", "Tap arrow (Show More) ➔ Method: POST ➔ Body: File ➔ Select 'Shortcut Input'."),
+            ("6.", "Tap Done! Name it 'AirBeam to PC' ⚡.")
+        ]
+        for num, txt in steps:
+            row = tk.Frame(guide_box, bg="#1e293b")
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text=num, bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), width=3, anchor="w").pack(side="left")
+            tk.Label(row, text=txt, bg="#1e293b", fg="#f8fafc", font=("Segoe UI", 9), wraplength=440, justify="left").pack(side="left")
+
+        btn_box = tk.Frame(content, bg="#0f172a")
+        btn_box.pack(fill="x", pady=(4, 0))
+
+        def copy_url_again():
+            self.clipboard_clear()
+            self.clipboard_append(upload_url)
+            btn_copy.config(text="Copied to Clipboard! ✅", fg="#10b981")
+            modal.after(2000, lambda: btn_copy.config(text=f"📋 Copy Upload URL ({upload_url})", fg="#ffffff"))
+
+        btn_copy = tk.Button(
+            btn_box, text=f"📋 Copy Upload URL ({upload_url})",
+            bg="#4c1d95", fg="#ffffff", font=("Segoe UI", 9, "bold"),
+            relief="flat", bd=0, padx=12, pady=8, cursor="hand2", command=copy_url_again
+        )
+        btn_copy.pack(fill="x", pady=(0, 6))
+
+        btn_close = tk.Button(
+            btn_box, text="Close",
+            bg="#334155", fg="#f8fafc", font=("Segoe UI", 9),
+            relief="flat", bd=0, padx=12, pady=6, cursor="hand2", command=modal.destroy
+        )
+        btn_close.pack(fill="x")
 
     def copy_win_hotspot_portal_url(self):
         url = getattr(self, "active_win_hotspot_portal_url", None)
