@@ -1682,3 +1682,13 @@ Upgrade AirBeam in `C:\Users\youssef\WirelessFileTransfer-v3.0` from v5.5 to v5.
      * Interface-directed multicast responses via socket.IP_MULTICAST_IF plus direct unicast to querying client.
      * Dual-protocol listener: answers mDNS (UDP 5353) and standard DNS (UDP 53) queries for irbeam.local.
    - Updated Fix-AirBeam-Firewall.bat and WindowsHotspotController to allow UDP ports 5353 and 53 across all network profiles (Private, Public, Domain).
+
+9. **Live Transfer Progress Bar for Mobile / iOS Shortcut Uploads & Apple Shortcuts Progress Architecture**:
+   - Analyzed iOS Shortcuts running behavior during large file uploads (e.g. 1.08 GB video):
+     * Apple\'s native Get Contents of URL action performs monolithic HTTP POST requests without exposing intermediate upload byte callbacks to the iOS Shortcuts UI; Apple displays its native running spinner in the Dynamic Island / notification pill until complete.
+     * Safari Web Portal (http://airbeam.local:8080) offers full in-browser progress tracking (0% -> 100%, MB transferred, live speed).
+   - Enhanced PC GUI in AirBeamSenderApp:
+     * Added real-time progress bar (	tk.Progressbar) and progress readout label to 
+x_tools_card.
+     * Implemented update_ios_upload_progress and complete_ios_upload_progress hooked into the HTTP stream loop in do_POST.
+     * Displays real-time filename, progress percentage, megabytes received out of total, live transfer speed in MB/s, and dynamic ETA in seconds on the PC screen.

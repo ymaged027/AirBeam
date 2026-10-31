@@ -3124,6 +3124,8 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
 
             CHUNK = 2 * 1024 * 1024
             bytes_left = payload_len
+            bytes_received = 0
+            start_time = time.time()
             try:
                 with open(part_path, 'wb', buffering=8 * 1024 * 1024) as f:
                     while bytes_left > 0:
@@ -3133,7 +3135,10 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                             break
                         f.write(buf)
                         bytes_left -= len(buf)
+                        bytes_received += len(buf)
                         self.app.record_ios_stream_bytes(len(buf), is_upload=True)
+                        if hasattr(self.app, "update_ios_upload_progress"):
+                            self.app.update_ios_upload_progress(filename, bytes_received, payload_len, start_time)
 
                 if is_multipart and boundary_bytes:
                     rem = content_len - (header_len + (payload_len - bytes_left))
@@ -3144,6 +3149,9 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                     if os.path.exists(final_path):
                         os.remove(final_path)
                     os.rename(part_path, final_path)
+
+                if hasattr(self.app, "complete_ios_upload_progress"):
+                    self.app.complete_ios_upload_progress(os.path.basename(final_path), payload_len, start_time)
 
                 if is_android:
                     if hasattr(self.app, "on_android_receive_complete"):
@@ -6001,6 +6009,15 @@ class AirBeamSenderApp(BaseTkApp):
         )
         self.lbl_ios_live_speed.pack(fill="x")
 
+        # Live Progress Bar for Incoming Mobile / iOS Shortcut Uploads
+        self.ios_upload_progress_bar = ttk.Progressbar(rx_tools_card, mode="determinate")
+        self.ios_upload_progress_bar.pack(fill="x", pady=(6, 2))
+        self.lbl_ios_upload_progress = tk.Label(
+            rx_tools_card, text="⚡ Ready to receive files via iOS Shortcut (Share Sheet) or Web Portal",
+            bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9), anchor="w"
+        )
+        self.lbl_ios_upload_progress.pack(fill="x", pady=(0, 4))
+
         # Initialize default placeholder QR codes
         self.reset_ios_qr_placeholders()
 
@@ -8258,6 +8275,50 @@ class AirBeamSenderApp(BaseTkApp):
             spd_text = f"⚡ {tag}: {spd_mb:.1f} MB/s ({spd_mbps:.0f} Mbps)"
             if hasattr(self, "lbl_ios_live_speed"):
                 self.after(0, lambda: self.lbl_ios_live_speed.config(text=spd_text))
+
+    def update_ios_upload_progress(self, filename: str, bytes_received: int, total_bytes: int, start_time: float):
+        now = time.time()
+        elapsed = max(0.001, now - start_time)
+        cur_speed = bytes_received / elapsed
+        spd_mb = cur_speed / (1024 * 1024)
+        pct = min(100, int((bytes_received / total_bytes) * 100)) if total_bytes > 0 else 0
+        eta = int((total_bytes - bytes_received) / cur_speed) if cur_speed > 0 else 0
+
+        # Throttle GUI update to once every 0.1s to maintain high performance
+        last_up = getattr(self, "_last_ios_prog_gui_update", 0.0)
+        if now - last_up < 0.1 and bytes_received < total_bytes:
+            return
+        self._last_ios_prog_gui_update = now
+
+        rec_mb = bytes_received / (1024 * 1024)
+        tot_mb = total_bytes / (1024 * 1024)
+        status_txt = f"📥 Receiving '{filename}': {rec_mb:.1f} / {tot_mb:.1f} MB ({pct}%) • {spd_mb:.1f} MB/s • ETA: {eta}s"
+
+        def _gui():
+            if hasattr(self, "ios_upload_progress_bar") and self.ios_upload_progress_bar.winfo_exists():
+                self.ios_upload_progress_bar.config(value=pct)
+            if hasattr(self, "lbl_ios_upload_progress") and self.lbl_ios_upload_progress.winfo_exists():
+                self.lbl_ios_upload_progress.config(text=status_txt, fg="#38bdf8")
+            if hasattr(self, "lbl_ios_live_speed") and self.lbl_ios_live_speed.winfo_exists():
+                self.lbl_ios_live_speed.config(text=f"⚡ Live Transfer: {rec_mb:.1f}/{tot_mb:.1f} MB ({pct}%) • {spd_mb:.1f} MB/s")
+
+        self.after(0, _gui)
+
+    def complete_ios_upload_progress(self, filename: str, total_bytes: int, start_time: float):
+        elapsed = max(0.001, time.time() - start_time)
+        spd_mb = (total_bytes / elapsed) / (1024 * 1024) if elapsed > 0 else 0.0
+        tot_mb = total_bytes / (1024 * 1024)
+        status_txt = f"✅ Received '{filename}' ({tot_mb:.1f} MB) in {elapsed:.1f}s at {spd_mb:.1f} MB/s"
+
+        def _gui():
+            if hasattr(self, "ios_upload_progress_bar") and self.ios_upload_progress_bar.winfo_exists():
+                self.ios_upload_progress_bar.config(value=100)
+            if hasattr(self, "lbl_ios_upload_progress") and self.lbl_ios_upload_progress.winfo_exists():
+                self.lbl_ios_upload_progress.config(text=status_txt, fg="#10b981")
+            if hasattr(self, "lbl_ios_live_speed") and self.lbl_ios_live_speed.winfo_exists():
+                self.lbl_ios_live_speed.config(text=f"⚡ Transfer Complete: {tot_mb:.1f} MB at {spd_mb:.1f} MB/s")
+
+        self.after(0, _gui)
 
     def add_files(self):
         files = filedialog.askopenfilenames(title="Select files to beam")
