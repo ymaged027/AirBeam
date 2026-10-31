@@ -557,78 +557,35 @@ public class WebPortalHtml {
 "        let isUploadCancelled = false;\n" +
 "        let activeUploadFiles = [];\n" +
 "        let activeUploadIndex = 0;\n" +
+"        let activeUploadedBytes = 0;\n" +
+"        let resumeUploadFn = null;\n" +
 "\n" +
 "        function toggleUploadPauseResume() {\n" +
-"            isUploadPaused = !isUploadPaused;\n" +
 "            const btn = document.getElementById('btnUploadPauseResume');\n" +
 "            const speedEl = document.getElementById('uploadSpeed');\n" +
-"            if (isUploadPaused) {\n" +
-"                if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }\n" +
-"                if (speedEl) speedEl.innerText = '⏹️ Stopped';\n" +
-"                showToast('⏹️ Upload stopped');\n" +
+"            if (!isUploadPaused) {\n" +
+"                isUploadPaused = true;\n" +
+"                if (btn) { btn.innerText = '▶ Resume'; btn.style.background = '#10B981'; }\n" +
+"                if (speedEl) speedEl.innerText = '⏸ Stopped';\n" +
+"                if (currentUploadXhr) {\n" +
+"                    try { currentUploadXhr.abort(); } catch (e) {}\n" +
+"                    currentUploadXhr = null;\n" +
+"                }\n" +
+"                showToast('⏸ Upload stopped');\n" +
 "            } else {\n" +
-"                if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }\n" +
-"                showToast('▶️ Upload resumed');\n" +
+"                isUploadPaused = false;\n" +
+"                if (btn) { btn.innerText = '⏸ Stop'; btn.style.background = '#F59E0B'; }\n" +
+"                showToast('▶ Upload resumed');\n" +
+"                if (resumeUploadFn) {\n" +
+"                    resumeUploadFn();\n" +
+"                }\n" +
 "            }\n" +
-"        }\n" +
-"\n" +
-"        async function checkServerTransferStatus() {\n" +
-"            try {\n" +
-"                const res = await fetch(getTargetBaseUrl() + '/api/transfer/status');\n" +
-"                if (!res.ok) return;\n" +
-"                const data = await res.json();\n" +
-"                const card = document.getElementById('liveTransferCard');\n" +
-"                if (!card) return;\n" +
-"                if (data.active) {\n" +
-"                    card.style.display = 'block';\n" +
-"                    document.getElementById('liveTransferFilename').innerText = data.filename || 'Active Transfer';\n" +
-"                    document.getElementById('liveTransferPercent').innerText = (data.percent || 0) + '%';\n" +
-"                    document.getElementById('liveTransferFill').style.width = (data.percent || 0) + '%';\n" +
-"                    const mbDone = ((data.transferred || 0) / (1024 * 1024)).toFixed(1);\n" +
-"                    const mbTotal = ((data.total || 0) / (1024 * 1024)).toFixed(1);\n" +
-"                    document.getElementById('liveTransferBytes').innerText = mbDone + ' MB / ' + mbTotal + ' MB';\n" +
-"                    const speed = (data.speed_mbps || 0).toFixed(1);\n" +
-"                    const btnStop = document.getElementById('btnLiveTransferStop');\n" +
-"                    if (data.is_paused) {\n" +
-"                        document.getElementById('liveTransferSpeed').innerText = '⏹️ Stopped';\n" +
-"                        if (btnStop) { btnStop.innerText = '▶️ Resume'; btnStop.style.background = '#10B981'; }\n" +
-"                    } else {\n" +
-"                        document.getElementById('liveTransferSpeed').innerText = '⚡ ' + speed + ' MB/s';\n" +
-"                        if (btnStop) { btnStop.innerText = '⏹️ Stop'; btnStop.style.background = '#F59E0B'; }\n" +
-"                    }\n" +
-"                } else {\n" +
-"                    card.style.display = 'none';\n" +
-"                }\n" +
-"            } catch (e) {}\n" +
-"        }\n" +
-"\n" +
-"        async function toggleServerTransfer() {\n" +
-"            try {\n" +
-"                const res = await fetch(getTargetBaseUrl() + '/api/transfer/toggle_pause', { method: 'POST' });\n" +
-"                const data = await res.json();\n" +
-"                const btn = document.getElementById('btnLiveTransferStop');\n" +
-"                if (data.is_paused) {\n" +
-"                    if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }\n" +
-"                    showToast('⏹️ Transfer stopped');\n" +
-"                } else {\n" +
-"                    if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }\n" +
-"                    showToast('▶️ Transfer resumed');\n" +
-"                }\n" +
-"            } catch (e) { showToast('Action failed'); }\n" +
-"        }\n" +
-"\n" +
-"        async function cancelServerTransfer() {\n" +
-"            try {\n" +
-"                await fetch(getTargetBaseUrl() + '/api/transfer/cancel', { method: 'POST' });\n" +
-"                const card = document.getElementById('liveTransferCard');\n" +
-"                if (card) card.style.display = 'none';\n" +
-"                showToast('❌ Transfer cancelled');\n" +
-"            } catch (e) { showToast('Cancel failed'); }\n" +
 "        }\n" +
 "\n" +
 "        async function cancelUpload() {\n" +
 "            isUploadCancelled = true;\n" +
 "            isUploadPaused = false;\n" +
+"            resumeUploadFn = null;\n" +
 "            if (currentUploadXhr) {\n" +
 "                try { currentUploadXhr.abort(); } catch (e) {}\n" +
 "                currentUploadXhr = null;\n" +
@@ -650,6 +607,7 @@ public class WebPortalHtml {
 "            activeUploadIndex = 0;\n" +
 "            isUploadPaused = false;\n" +
 "            isUploadCancelled = false;\n" +
+"            resumeUploadFn = null;\n" +
 "\n" +
 "            const progressBox = document.getElementById('uploadProgressBox');\n" +
 "            const fileNameEl = document.getElementById('uploadFileName');\n" +
@@ -660,12 +618,10 @@ public class WebPortalHtml {
 "            const btnPause = document.getElementById('btnUploadPauseResume');\n" +
 "\n" +
 "            if (btnPause) {\n" +
-"                btnPause.innerText = '⏹️ Stop';\n" +
+"                btnPause.innerText = '⏸ Stop';\n" +
 "                btnPause.style.background = '#F59E0B';\n" +
 "            }\n" +
 "            progressBox.style.display = 'block';\n" +
-"\n" +
-"            const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB slice per chunk\n" +
 "\n" +
 "            for (activeUploadIndex = 0; activeUploadIndex < activeUploadFiles.length; activeUploadIndex++) {\n" +
 "                if (isUploadCancelled) break;\n" +
@@ -673,69 +629,111 @@ public class WebPortalHtml {
 "                fileNameEl.innerText = file.name;\n" +
 "                barFill.style.width = '0%';\n" +
 "                percentEl.innerText = '0%';\n" +
-"                detailEl.innerText = `0 MB / ${(file.size / (1024*1024)).toFixed(1)} MB`;\n" +
+"                if (detailEl) detailEl.innerText = `0 MB / ${(file.size / (1024*1024)).toFixed(1)} MB`;\n" +
+"                activeUploadedBytes = 0;\n" +
 "\n" +
 "                let offset = 0;\n" +
 "                let lastTime = Date.now();\n" +
 "                let lastLoaded = 0;\n" +
 "\n" +
-"                while (offset < file.size) {\n" +
-"                    if (isUploadCancelled) break;\n" +
-"                    while (isUploadPaused && !isUploadCancelled) {\n" +
-"                        await new Promise(r => setTimeout(r, 200));\n" +
-"                    }\n" +
-"                    if (isUploadCancelled) break;\n" +
-"\n" +
-"                    const chunkEnd = Math.min(offset + CHUNK_SIZE, file.size);\n" +
-"                    const chunk = file.slice(offset, chunkEnd);\n" +
-"                    const isLast = (chunkEnd >= file.size);\n" +
+"                while (offset < file.size && !isUploadCancelled) {\n" +
+"                    const currentOffset = offset;\n" +
+"                    const isResume = (currentOffset > 0);\n" +
+"                    const bodyToSend = isResume ? file.slice(currentOffset) : file;\n" +
 "\n" +
 "                    const chunkOk = await new Promise((resolve) => {\n" +
-"                        const xhr = new XMLHttpRequest();\n" +
-"                        currentUploadXhr = xhr;\n" +
+"                        let innerResolved = false;\n" +
 "\n" +
-"                        xhr.upload.onprogress = (e) => {\n" +
-"                            if (isUploadCancelled || isUploadPaused) return;\n" +
-"                            const curTotal = offset + e.loaded;\n" +
-"                            const pct = Math.round((curTotal / file.size) * 100);\n" +
-"                            barFill.style.width = pct + '%';\n" +
-"                            percentEl.innerText = pct + '%';\n" +
-"                            detailEl.innerText = `${(curTotal / (1024*1024)).toFixed(1)} MB / ${(file.size / (1024*1024)).toFixed(1)} MB`;\n" +
-"\n" +
-"                            const now = Date.now();\n" +
-"                            const dt = (now - lastTime) / 1000;\n" +
-"                            if (dt >= 0.3) {\n" +
-"                                const speedMB = ((curTotal - lastLoaded) / (1024 * 1024)) / dt;\n" +
-"                                speedEl.innerText = `⚡ ${speedMB.toFixed(1)} MB/s`;\n" +
-"                                lastTime = now;\n" +
-"                                lastLoaded = curTotal;\n" +
+"                        function doSend() {\n" +
+"                            if (isUploadCancelled) {\n" +
+"                                if (!innerResolved) { innerResolved = true; resolve(false); }\n" +
+"                                return;\n" +
 "                            }\n" +
-"                        };\n" +
+"                            const xhr = new XMLHttpRequest();\n" +
+"                            currentUploadXhr = xhr;\n" +
 "\n" +
-"                        xhr.onload = () => {\n" +
-"                            currentUploadXhr = null;\n" +
-"                            resolve(xhr.status >= 200 && xhr.status < 300);\n" +
-"                        };\n" +
+"                            xhr.upload.onprogress = (e) => {\n" +
+"                                if (isUploadCancelled || isUploadPaused) return;\n" +
+"                                const curTotal = currentOffset + e.loaded;\n" +
+"                                activeUploadedBytes = curTotal;\n" +
+"                                const pct = Math.min(100, Math.round((curTotal / file.size) * 100));\n" +
+"                                barFill.style.width = pct + '%';\n" +
+"                                percentEl.innerText = pct + '%';\n" +
+"                                if (detailEl) detailEl.innerText = `${(curTotal / (1024*1024)).toFixed(1)} MB / ${(file.size / (1024*1024)).toFixed(1)} MB`;\n" +
 "\n" +
-"                        xhr.onerror = () => { currentUploadXhr = null; resolve(false); };\n" +
-"                        xhr.onabort = () => { currentUploadXhr = null; resolve(false); };\n" +
+"                                const now = Date.now();\n" +
+"                                const dt = (now - lastTime) / 1000;\n" +
+"                                if (dt >= 0.3) {\n" +
+"                                    const speedMB = ((curTotal - lastLoaded) / (1024 * 1024)) / dt;\n" +
+"                                    speedEl.innerText = `⚡ ${speedMB.toFixed(1)} MB/s`;\n" +
+"                                    lastTime = now;\n" +
+"                                    lastLoaded = curTotal;\n" +
+"                                }\n" +
+"                            };\n" +
 "\n" +
-"                        const url = getTargetBaseUrl() + '/upload?filename=' + encodeURIComponent(file.name) + '&offset=' + offset + '&total=' + file.size + (isLast ? '&last=1' : '');\n" +
-"                        xhr.open('POST', url, true);\n" +
-"                        xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));\n" +
-"                        xhr.setRequestHeader('x-file-offset', offset.toString());\n" +
-"                        xhr.setRequestHeader('x-file-total', file.size.toString());\n" +
-"                        xhr.send(chunk);\n" +
+"                            xhr.onload = () => {\n" +
+"                                currentUploadXhr = null;\n" +
+"                                resumeUploadFn = null;\n" +
+"                                if (!innerResolved) {\n" +
+"                                    innerResolved = true;\n" +
+"                                    resolve(xhr.status >= 200 && xhr.status < 300);\n" +
+"                                }\n" +
+"                            };\n" +
+"\n" +
+"                            xhr.onerror = () => {\n" +
+"                                currentUploadXhr = null;\n" +
+"                                if (!innerResolved) {\n" +
+"                                    innerResolved = true;\n" +
+"                                    resolve(false);\n" +
+"                                }\n" +
+"                            };\n" +
+"\n" +
+"                            xhr.onabort = () => {\n" +
+"                                currentUploadXhr = null;\n" +
+"                                if (isUploadPaused && !isUploadCancelled) {\n" +
+"                                    resumeUploadFn = () => {\n" +
+"                                        offset = activeUploadedBytes;\n" +
+"                                        doSend();\n" +
+"                                    };\n" +
+"                                } else {\n" +
+"                                    if (!innerResolved) {\n" +
+"                                        innerResolved = true;\n" +
+"                                        resolve(false);\n" +
+"                                    }\n" +
+"                                }\n" +
+"                            };\n" +
+"\n" +
+"                            let url = getTargetBaseUrl() + '/upload?filename=' + encodeURIComponent(file.name);\n" +
+"                            if (currentOffset > 0) {\n" +
+"                                url += '&offset=' + currentOffset + '&total=' + file.size + '&last=1';\n" +
+"                            }\n" +
+"                            xhr.open('POST', url, true);\n" +
+"                            xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));\n" +
+"                            if (currentOffset > 0) {\n" +
+"                                xhr.setRequestHeader('x-file-offset', currentOffset.toString());\n" +
+"                                xhr.setRequestHeader('x-file-total', file.size.toString());\n" +
+"                            }\n" +
+"                            xhr.send(bodyToSend);\n" +
+"                        }\n" +
+"\n" +
+"                        doSend();\n" +
 "                    });\n" +
 "\n" +
 "                    if (isUploadCancelled) break;\n" +
+"                    if (isUploadPaused) {\n" +
+"                        while (isUploadPaused && !isUploadCancelled) {\n" +
+"                            await new Promise(r => setTimeout(r, 200));\n" +
+"                        }\n" +
+"                    }\n" +
+"                    if (isUploadCancelled) break;\n" +
+"\n" +
 "                    if (!chunkOk) {\n" +
 "                        if (!isUploadPaused) {\n" +
 "                            showToast(`❌ Upload error: ${file.name}`);\n" +
 "                            break;\n" +
 "                        }\n" +
 "                    } else {\n" +
-"                        offset = chunkEnd;\n" +
+"                        offset = file.size;\n" +
 "                    }\n" +
 "                }\n" +
 "\n" +

@@ -2736,24 +2736,37 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
         let isUploadCancelled = false;
         let activeUploadFiles = [];
         let activeUploadIndex = 0;
+        let activeUploadedBytes = 0;
+        let resumeUploadFn = null;
 
         function toggleUploadPauseResume() {
-            isUploadPaused = !isUploadPaused;
             const btn = document.getElementById('btnUploadPauseResume');
             const speedEl = document.getElementById('uploadSpeed');
-            if (isUploadPaused) {
-                if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }
-                if (speedEl) speedEl.innerText = '⏹️ Stopped';
-                showToast('⏹️ Upload stopped');
+            if (!isUploadPaused) {
+                // User clicked Stop (Pause)
+                isUploadPaused = true;
+                if (btn) { btn.innerText = '▶ Resume'; btn.style.background = '#10B981'; }
+                if (speedEl) speedEl.innerText = '⏸ Stopped';
+                if (currentUploadXhr) {
+                    try { currentUploadXhr.abort(); } catch (e) {}
+                    currentUploadXhr = null;
+                }
+                showToast('⏸ Upload stopped');
             } else {
-                if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }
-                showToast('▶️ Upload resumed');
+                // User clicked Resume
+                isUploadPaused = false;
+                if (btn) { btn.innerText = '⏸ Stop'; btn.style.background = '#F59E0B'; }
+                showToast('▶ Upload resumed');
+                if (resumeUploadFn) {
+                    resumeUploadFn();
+                }
             }
         }
 
         async function cancelUpload() {
             isUploadCancelled = true;
             isUploadPaused = false;
+            resumeUploadFn = null;
             if (currentUploadXhr) {
                 try { currentUploadXhr.abort(); } catch (e) {}
                 currentUploadXhr = null;
@@ -2775,6 +2788,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             activeUploadIndex = 0;
             isUploadPaused = false;
             isUploadCancelled = false;
+            resumeUploadFn = null;
 
             const progressBox = document.getElementById('uploadProgressBox');
             const fileNameEl = document.getElementById('uploadFileName');
@@ -2784,13 +2798,11 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const btnPause = document.getElementById('btnUploadPauseResume');
 
             if (btnPause) {
-                btnPause.innerText = '⏹️ Stop';
+                btnPause.innerText = '⏸ Stop';
                 btnPause.style.background = '#F59E0B';
             }
             progressBox.style.display = 'block';
             await acquireWakeLock();
-
-            const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunk slice
 
             for (activeUploadIndex = 0; activeUploadIndex < activeUploadFiles.length; activeUploadIndex++) {
                 if (isUploadCancelled) break;
@@ -2798,67 +2810,109 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 fileNameEl.innerText = file.name;
                 barFill.style.width = '0%';
                 percentEl.innerText = '0%';
+                activeUploadedBytes = 0;
 
                 let offset = 0;
                 let lastTime = Date.now();
                 let lastLoaded = 0;
 
-                while (offset < file.size) {
-                    if (isUploadCancelled) break;
-                    while (isUploadPaused && !isUploadCancelled) {
-                        await new Promise(r => setTimeout(r, 200));
-                    }
-                    if (isUploadCancelled) break;
-
-                    const chunkEnd = Math.min(offset + CHUNK_SIZE, file.size);
-                    const chunk = file.slice(offset, chunkEnd);
-                    const isLast = (chunkEnd >= file.size);
+                while (offset < file.size && !isUploadCancelled) {
+                    const currentOffset = offset;
+                    const isResume = (currentOffset > 0);
+                    const bodyToSend = isResume ? file.slice(currentOffset) : file;
 
                     const chunkOk = await new Promise((resolve) => {
-                        const xhr = new XMLHttpRequest();
-                        currentUploadXhr = xhr;
+                        let innerResolved = false;
 
-                        xhr.upload.onprogress = (e) => {
-                            if (isUploadCancelled || isUploadPaused) return;
-                            const curTotal = offset + e.loaded;
-                            const pct = Math.round((curTotal / file.size) * 100);
-                            barFill.style.width = pct + '%';
-                            percentEl.innerText = pct + '%';
-
-                            const now = Date.now();
-                            const dt = (now - lastTime) / 1000;
-                            if (dt >= 0.3) {
-                                const speedMB = ((curTotal - lastLoaded) / (1024 * 1024)) / dt;
-                                speedEl.innerText = `⚡ ${speedMB.toFixed(1)} MB/s`;
-                                lastTime = now;
-                                lastLoaded = curTotal;
+                        function doSend() {
+                            if (isUploadCancelled) {
+                                if (!innerResolved) { innerResolved = true; resolve(false); }
+                                return;
                             }
-                        };
+                            const xhr = new XMLHttpRequest();
+                            currentUploadXhr = xhr;
 
-                        xhr.onload = () => {
-                            currentUploadXhr = null;
-                            resolve(xhr.status >= 200 && xhr.status < 300);
-                        };
+                            xhr.upload.onprogress = (e) => {
+                                if (isUploadCancelled || isUploadPaused) return;
+                                const curTotal = currentOffset + e.loaded;
+                                activeUploadedBytes = curTotal;
+                                const pct = Math.min(100, Math.round((curTotal / file.size) * 100));
+                                barFill.style.width = pct + '%';
+                                percentEl.innerText = pct + '%';
 
-                        xhr.onerror = () => { currentUploadXhr = null; resolve(false); };
-                        xhr.onabort = () => { currentUploadXhr = null; resolve(false); };
+                                const now = Date.now();
+                                const dt = (now - lastTime) / 1000;
+                                if (dt >= 0.3) {
+                                    const speedMB = ((curTotal - lastLoaded) / (1024 * 1024)) / dt;
+                                    speedEl.innerText = `⚡ ${speedMB.toFixed(1)} MB/s`;
+                                    lastTime = now;
+                                    lastLoaded = curTotal;
+                                }
+                            };
 
-                        const url = '/upload?filename=' + encodeURIComponent(file.name) + '&offset=' + offset + '&total=' + file.size + (isLast ? '&last=1' : '');
-                        xhr.open('POST', url, true);
-                        xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
-                        xhr.setRequestHeader('x-file-offset', offset.toString());
-                        xhr.setRequestHeader('x-file-total', file.size.toString());
-                        xhr.send(chunk);
+                            xhr.onload = () => {
+                                currentUploadXhr = null;
+                                resumeUploadFn = null;
+                                if (!innerResolved) {
+                                    innerResolved = true;
+                                    resolve(xhr.status >= 200 && xhr.status < 300);
+                                }
+                            };
+
+                            xhr.onerror = () => {
+                                currentUploadXhr = null;
+                                if (!innerResolved) {
+                                    innerResolved = true;
+                                    resolve(false);
+                                }
+                            };
+
+                            xhr.onabort = () => {
+                                currentUploadXhr = null;
+                                if (isUploadPaused && !isUploadCancelled) {
+                                    resumeUploadFn = () => {
+                                        offset = activeUploadedBytes;
+                                        doSend();
+                                    };
+                                } else {
+                                    if (!innerResolved) {
+                                        innerResolved = true;
+                                        resolve(false);
+                                    }
+                                }
+                            };
+
+                            let url = getTargetBaseUrl() + '/upload?filename=' + encodeURIComponent(file.name);
+                            if (currentOffset > 0) {
+                                url += '&offset=' + currentOffset + '&total=' + file.size + '&last=1';
+                            }
+                            xhr.open('POST', url, true);
+                            xhr.setRequestHeader('x-file-name', encodeURIComponent(file.name));
+                            if (currentOffset > 0) {
+                                xhr.setRequestHeader('x-file-offset', currentOffset.toString());
+                                xhr.setRequestHeader('x-file-total', file.size.toString());
+                            }
+                            xhr.send(bodyToSend);
+                        }
+
+                        doSend();
                     });
 
                     if (isUploadCancelled) break;
+                    if (isUploadPaused) {
+                        while (isUploadPaused && !isUploadCancelled) {
+                            await new Promise(r => setTimeout(r, 200));
+                        }
+                    }
+                    if (isUploadCancelled) break;
+
                     if (!chunkOk) {
                         if (!isUploadPaused) {
                             showToast(`❌ Upload error: ${file.name}`);
                             break;
                         }
                     } else {
-                        offset = chunkEnd;
+                        offset = file.size;
                     }
                 }
 
@@ -3581,9 +3635,14 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                         f.write(buf)
                         bytes_left -= len(buf)
                         bytes_received += len(buf)
-                        self.app.record_ios_stream_bytes(len(buf), is_upload=True)
+                        if hasattr(self.app, "record_ios_stream_bytes"):
+                            try: self.app.record_ios_stream_bytes(len(buf), is_upload=True)
+                            except Exception: pass
                         if hasattr(self.app, "update_ios_upload_progress"):
-                            self.app.update_ios_upload_progress(filename, bytes_received, payload_len, start_time)
+                            try:
+                                total_sz = int(query.get('total', [payload_len])[0])
+                                self.app.update_ios_upload_progress(filename, bytes_received + max(0, offset_val), total_sz, start_time)
+                            except Exception: pass
 
                 if is_multipart and boundary_bytes:
                     rem = content_len - (header_len + (payload_len - bytes_left))

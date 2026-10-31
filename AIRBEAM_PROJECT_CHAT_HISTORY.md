@@ -1861,3 +1861,22 @@ x_tools_card.
    - **Production Release APK Rebuilt & Packaged**:
      * Rebuilt and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 17s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,096` bytes).
+
+17. **Fix: iPhone-to-Windows Upload Freezing & Adaptive Stream Resumption**:
+   - **Root Cause of iPhone-to-Windows Freezing at 2 MB ("At the beginning")**:
+     * In previous versions, the Web Portal attempted to upload files via 2 MB client-side chunking (`const CHUNK_SIZE = 2 * 1024 * 1024` with `file.slice()`).
+     * On iOS WebKit (Safari), media selected from the Photos app is backed by lazy-loaded asset descriptors. Calling `file.slice()` repeatedly across multiple XHRs causes WebKit to fail with `NotReadableError` or network drop (`xhr.onerror`) on chunk 1.
+     * Furthermore, on large files (e.g. 1.08 GB video `0871_04_FHD.mp4`), 2 MB chunking required 515 sequential HTTP POST connections, causing severe latency and file-lock contention. Every file larger than 2 MB froze after chunk 0 at exactly 2,097,152 bytes.
+   - **Adaptive High-Speed Streaming with Pause/Resume**:
+     * Replaced fragile 2 MB chunk slicing in both Web Portals (`sender.py` and `WebPortalHtml.java`) with adaptive direct streaming:
+       1. **Normal Flow**: Files are streamed directly (`xhr.send(file)`) in a single ultra-fast HTTP request, reaching maximum Wi-Fi throughput (50-100+ MB/s) with smooth progress reporting (0% to 100%).
+       2. **Instant Pause / Stop**: Tapping `Stop` aborts the active XHR cleanly, sets button to `Resume`, and records the exact byte position (`activeUploadedBytes`).
+       3. **Seamless Resume**: Tapping `Resume` slices from `activeUploadedBytes` to `file.size` and resumes with `offset` parameters, allowing the server to seek and append without restarting from 0.
+       4. **Cancel Support**: Tapping `Cancel` aborts the transfer and requests immediate deletion of `.part` files on the host.
+       5. **Target Base URL**: Integrated `getTargetBaseUrl()` so uploads are accurately routed to the selected device (Windows PC or Samsung Tablet).
+   - **Server-Side Robustness in `sender.py`**:
+     * Wrapped telemetry methods `record_ios_stream_bytes` and `update_ios_upload_progress` in defensive exception handling to prevent GUI updates from failing active transfers.
+     * Accurately calculates total progress using `query.get('total')` during resumed chunk streams.
+   - **Release APK Rebuilt & Packaged**:
+     * Built signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,087` bytes).
