@@ -453,7 +453,6 @@ public class WebPortalHtml {
 "            fetchClipboard();\n" +
 "            checkServerTransferStatus();\n" +
 "        }\n" +
-"        let currentAndroidClipboard = '';\n" +
 "\n" +
 "        function showToast(msg) {\n" +
 "            const t = document.getElementById('toast');\n" +

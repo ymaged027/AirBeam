@@ -1834,3 +1834,30 @@ x_tools_card.
    - **Production Release APK Rebuilt & Deployed**:
      * Rebuilt signed release APK with Gradle 8.5 (`assembleRelease` in 22s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,107` bytes).
+
+16. **Fix: Web Portal Script Parse Error, Universal mDNS Availability, and Chunked Uploads**:
+   - **Root Cause of Web Portal Freeze on Android (`WebPortalHtml.java`)**:
+     * In `WebPortalHtml.java`, `let currentAndroidClipboard = '';` was declared twice in the global script scope (line 390 and line 456).
+     * In modern browsers (Safari on iOS, Chrome), duplicate `let` declarations trigger a fatal `Uncaught SyntaxError: Identifier 'currentAndroidClipboard' has already been declared` during script parsing.
+     * This prevented the entire script from executing: `handleFileSelect()` was not defined (choosing files on iPhone did nothing), `fetchFiles()` never ran (staged files never loaded), `loadDevices()` never ran (the Device Switcher remained hidden), and clipboard synchronization was broken.
+   - **Resolution in `WebPortalHtml.java`**:
+     * Removed the duplicate `let currentAndroidClipboard = '';` declaration.
+     * Verified with AST analysis that all top-level declarations (`stagedFiles`, `currentAndroidClipboard`, `currentTargetDevice`, `detectedDevices`, `currentUploadXhr`, etc.) are declared exactly once.
+     * Web Portal Dropzone, chunked uploads, staged file downloads, and the top-level Device Switcher now execute smoothly on Safari and Chrome.
+   - **Root Cause of PC Web Portal Failure When Tablet is Closed (`sender.py`)**:
+     * In `AirBeamMDNSResponder` (`sender.py`), lines 3982-3995 contained `should_yield = True` if `mode_val == "TABLET_HOTSPOT"` and `entry_ip` had a saved IP address.
+     * Even when the tablet was turned off or closed, `mode_val` remained `"TABLET_HOTSPOT"` and `entry_ip` retained the tablet's IP from user settings.
+     * Consequently, the PC silently dropped all UDP 5353 queries for `airbeam.local`, leaving no device on the network to respond to `airbeam.local:8080` and causing Safari to fail with "Server Not Found".
+   - **Resolution in `sender.py`**:
+     * Removed `should_yield` entirely from `AirBeamMDNSResponder`. The PC now always answers queries for `airbeam.local` and `airbeam-pc.local`.
+     * Both PC and Android web portals feature the unified Device Switcher (`[ 💻 Windows PC ] [ 📱 Samsung Tablet ]`), allowing the user to seamlessly switch between devices at any time without address conflicts.
+   - **Robust Chunked Upload Handling on PC (`sender.py`)**:
+     * In `IPhonePortalHTTPHandler.do_POST()`, intermediate chunks previously triggered `on_ios_receive_complete(final_path)` and `complete_ios_upload_progress()` before the file was finished and while `final_path` did not yet exist.
+     * Wrapped completion callbacks and final file rename strictly inside `if is_last_chunk:`. Intermediate chunks return `{"status": "ok", "complete": False, "offset": offset_val}`.
+     * Protected `.part` files during pause/resume by only removing incomplete files on explicit user cancellation (`action=cancel`).
+   - **Targeted mDNS Query Differentiation on Android (`AirBeamMdnsResponder.java`)**:
+     * Updated `isAirbeamLocalQuery()` to ignore queries specifically destined for `airbeam-pc`, preventing interference with the PC's mDNS announcements.
+     * Android now answers with corresponding labels (`airbeam-android.local` or `airbeam-tablet.local`) when specifically queried.
+   - **Production Release APK Rebuilt & Packaged**:
+     * Rebuilt and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 17s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,096` bytes).

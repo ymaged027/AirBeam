@@ -3590,23 +3590,37 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                     if rem > 0:
                         self.rfile.read(rem)
 
-                is_last_chunk = query.get('last', ['0'])[0] == '1' or offset_val < 0
-                if is_last_chunk and os.path.exists(part_path):
-                    if os.path.exists(final_path):
-                        os.remove(final_path)
-                    os.rename(part_path, final_path)
+                is_last_chunk = (
+                    query.get('last', ['0'])[0] == '1'
+                    or self.headers.get('x-file-last') == '1'
+                    or offset_val < 0
+                )
+                if is_last_chunk:
+                    if os.path.exists(part_path):
+                        if os.path.exists(final_path):
+                            try: os.remove(final_path)
+                            except Exception: pass
+                        try:
+                            os.rename(part_path, final_path)
+                        except Exception:
+                            try:
+                                shutil.copyfile(part_path, final_path)
+                                os.remove(part_path)
+                            except Exception: pass
 
-                if hasattr(self.app, "complete_ios_upload_progress"):
-                    self.app.complete_ios_upload_progress(os.path.basename(final_path), payload_len, start_time)
+                    if hasattr(self.app, "complete_ios_upload_progress"):
+                        self.app.complete_ios_upload_progress(os.path.basename(final_path), payload_len, start_time)
 
-                if is_android:
-                    if hasattr(self.app, "on_android_receive_complete"):
-                        self.app.after(0, lambda p=final_path: self.app.on_android_receive_complete(p))
+                    if is_android:
+                        if hasattr(self.app, "on_android_receive_complete"):
+                            self.app.after(0, lambda p=final_path: self.app.on_android_receive_complete(p))
+                    else:
+                        if hasattr(self.app, "on_ios_receive_complete"):
+                            self.app.after(0, lambda p=final_path: self.app.on_ios_receive_complete(p))
+
+                    resp = json.dumps({"status": "ok", "filename": os.path.basename(final_path), "complete": True, "size": payload_len}).encode('utf-8')
                 else:
-                    if hasattr(self.app, "on_ios_receive_complete"):
-                        self.app.after(0, lambda p=final_path: self.app.on_ios_receive_complete(p))
-
-                resp = json.dumps({"status": "ok", "filename": os.path.basename(final_path), "size": payload_len}).encode('utf-8')
+                    resp = json.dumps({"status": "ok", "filename": os.path.basename(part_path), "offset": offset_val, "complete": False, "size": payload_len}).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(resp)))
@@ -3977,22 +3991,9 @@ class AirBeamMDNSResponder:
                             # If specifically for airbeam-pc.local, always answer
                             is_pc_query = b'airbeam-pc' in lower
 
-                            # Cooperative mDNS: If tablet is detected on LAN and user is in Native Android mode,
-                            # yield airbeam.local to tablet so there is zero collision on home Wi-Fi!
-                            should_yield = False
-                            if not is_pc_query:
-                                try:
-                                    t_ip = getattr(self.app, "target_ip", None) or getattr(self.app, "discovered_ip", None)
-                                    if not t_ip or t_ip.startswith("Searching"):
-                                        t_ip = self.app.entry_ip.get().strip() if hasattr(self.app, "entry_ip") else ""
-                                    mode_val = self.app.connection_mode.get() if hasattr(self.app, "connection_mode") else ""
-                                    if t_ip and not t_ip.startswith("Searching") and not t_ip.startswith("127.") and mode_val == "TABLET_HOTSPOT":
-                                        should_yield = True
-                                except Exception:
-                                    pass
-
-                            if should_yield:
-                                continue
+                            # PC always responds for airbeam.local and airbeam-pc.local.
+                            # Both PC and Android portals feature the unified Device Switcher so
+                            # the user can seamlessly toggle between PC and Tablet with zero conflicts!
 
                             reply_label = self._build_dns_label("airbeam-pc.local") if is_pc_query else target_label
                             header = qid + struct.pack('!HHHHH', 0x8400, 0, 1, 0, 0)

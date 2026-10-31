@@ -127,7 +127,7 @@ public class AirBeamMdnsResponder {
 
                     if (isAirbeamLocalQuery(packet.getData(), packet.getLength())) {
                         Log.d(TAG, "Received query for airbeam.local from " + packet.getAddress().getHostAddress());
-                        sendMdnsAnswer(multicastSocket, packet.getAddress(), packet.getPort(), currentIp);
+                        sendMdnsAnswer(multicastSocket, packet.getAddress(), packet.getPort(), currentIp, packet.getData(), packet.getLength());
                     }
                 }
             } catch (Exception e) {
@@ -155,27 +155,20 @@ public class AirBeamMdnsResponder {
 
     private boolean isAirbeamLocalQuery(byte[] data, int length) {
         if (length < 12) return false;
-        // Search for ASCII substring "airbeam" inside the packet
-        byte[] target = "airbeam".getBytes(StandardCharsets.US_ASCII);
-        for (int i = 0; i <= length - target.length; i++) {
-            boolean match = true;
-            for (int j = 0; j < target.length; j++) {
-                byte b = data[i + j];
-                // Case-insensitive ASCII comparison
-                if (b >= 'A' && b <= 'Z') b = (byte) (b + 32);
-                if (b != target[j]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return true;
-        }
-        return false;
+        String s = new String(data, 0, length, StandardCharsets.ISO_8859_1).toLowerCase();
+        // If specifically for airbeam-pc, let PC respond
+        if (s.contains("airbeam-pc")) return false;
+        return s.contains("airbeam") && s.contains("local");
     }
 
-    private void sendMdnsAnswer(MulticastSocket socket, InetAddress senderAddr, int senderPort, String currentIp) {
+    private void sendMdnsAnswer(MulticastSocket socket, InetAddress senderAddr, int senderPort, String currentIp, byte[] queryData, int queryLen) {
         try {
-            byte[] responseBytes = buildMdnsAnswerPacket(currentIp);
+            String qStr = queryData != null ? new String(queryData, 0, queryLen, StandardCharsets.ISO_8859_1).toLowerCase() : "";
+            String host = "airbeam";
+            if (qStr.contains("airbeam-android")) host = "airbeam-android";
+            else if (qStr.contains("airbeam-tablet")) host = "airbeam-tablet";
+
+            byte[] responseBytes = buildMdnsAnswerPacket(currentIp, host);
             if (responseBytes == null) return;
 
             // 1. Unicast reply to the querying client
@@ -194,6 +187,10 @@ public class AirBeamMdnsResponder {
     }
 
     private byte[] buildMdnsAnswerPacket(String ipAddress) {
+        return buildMdnsAnswerPacket(ipAddress, "airbeam");
+    }
+
+    private byte[] buildMdnsAnswerPacket(String ipAddress, String hostname) {
         try {
             byte[] ipBytes = InetAddress.getByName(ipAddress).getAddress();
             if (ipBytes.length != 4) return null;
@@ -214,9 +211,10 @@ public class AirBeamMdnsResponder {
             // Additional: 0
             dos.writeShort(0);
 
-            // Name: \x07airbeam\x05local\x00
-            dos.writeByte(7);
-            dos.writeBytes("airbeam");
+            // Name: \x<len><hostname>\x05local\x00
+            byte[] hostBytes = hostname.getBytes(StandardCharsets.US_ASCII);
+            dos.writeByte(hostBytes.length);
+            dos.write(hostBytes);
             dos.writeByte(5);
             dos.writeBytes("local");
             dos.writeByte(0);
