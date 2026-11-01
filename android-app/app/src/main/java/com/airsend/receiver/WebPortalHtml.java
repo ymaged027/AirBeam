@@ -496,7 +496,7 @@ public class WebPortalHtml {
 "        }\n" +
 "\n" +
 "        function copyUploadEndpoint() {\n" +
-"            const url = 'http://airbeam.local:" + serverPort + "/upload';\n" +
+"            const url = (window.location.origin || ('http://' + window.location.host)) + '/upload';\n" +
 "            navigator.clipboard.writeText(url).then(() => showToast('📋 Upload URL copied!')).catch(() => {\n" +
 "                fallbackCopy(url);\n" +
 "            });\n" +

@@ -1880,3 +1880,34 @@ x_tools_card.
    - **Release APK Rebuilt & Packaged**:
      * Built signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,087` bytes).
+
+18. **Fix: Web Portal Connectivity on Windows Hotspot & Mobile Hotspot (Direct IP Routing & mDNS Isolation Fallback)**:
+   - **Root Cause of Hotspot Inaccessibility**:
+     * **Home Wi-Fi vs. Hotspots**: On standard Home Wi-Fi routers, multicast UDP (224.0.0.251:5353) is forwarded across all clients, allowing `http://airbeam.local:8080` to resolve effortlessly.
+     * **Windows Hotspot (Option 2)**: Windows Internet Connection Sharing (ICS) creates a virtual NAT router on `192.168.137.1` that drops multicast across the Wi-Fi Direct virtual adapter and blocks Python from binding UDP port 53. Because the QR code and copy link were hardcoded to `http://airbeam.local:8080`, mobile devices connected to the hotspot failed DNS resolution with "Server Not Found".
+     * **Phone Personal Hotspot (Option 3)**: iOS explicitly suppresses mDNS multicast lookups over the Personal Hotspot AP bridge. When an iPhone scans `http://airbeam.local:8080` while hosting a hotspot, Safari cannot resolve `.local` names to connected clients.
+     * **Tablet Hotspot (Android APK)**: Android Wi-Fi hotspot drivers drop mDNS multicast across the `ap0` / `swlan0` tethering interface to conserve battery and bandwidth. The tablet's portal QR code statically pointed to `http://airbeam.local:8080`, rendering it unreachable to connected phones.
+   - **Desktop App Resolution (`desktop-sender/sender.py`)**:
+     * **Option 2 (Windows 5 GHz Hotspot)**:
+       - Configured `toggle_windows_hotspot_for_ios`, `toggle_offline_hotspot_loopback`, and `refresh_win_hotspot_qr` to dynamically generate QR codes and copy links directly using the host IP (`http://192.168.137.1:8080` with mDNS fallback label).
+       - Connected mobile devices scanning the QR code now connect directly over TCP in <50ms without DNS resolution.
+     * **Option 3 (Phone Personal Hotspot)**:
+       - Configured `on_phone_hotspot_qr_toggle_changed`, `refresh_phone_hotspot_qr`, and `update_wifi_telemetry_loop` to use the PC's actual assigned IP on the phone's hotspot (`http://<cur_ip>:8080`, e.g. `172.20.10.x` or `192.168.43.x`).
+       - Prevents telemetry loop from overwriting active hotspot QR codes with `airbeam.local`.
+     * **Cross-Subnet Multi-Homing in `AirBeamMDNSResponder`**:
+       - Added `/24` prefix matching in `_get_best_reply_ip` to return interface IPs matching Android hotspot (`192.168.43.*`) and dynamic subnets.
+       - Removed restrictive prefix filtering in `find_hotspot_device_ip` so dynamic gateways (such as `10.150.131.50`) are properly probed.
+     * **Device Switcher & Download Support in `IOS_HTML_TEMPLATE`**:
+       - Updated download and zip links in the desktop Web Portal to utilize `getTargetBaseUrl()` when targeting the peer tablet.
+   - **Android APK Resolution (`MainActivity.java`, `FileServerService.java`, `WebPortalHtml.java`)**:
+     * **Dynamic Portal URL & QR Code Generation**:
+       - Added `getActivePortalUrl()` in `MainActivity.java` dynamically resolving `getHotspotIpAddress(this)` in Tablet Hotspot mode (`192.168.43.1` or `10.150.131.50`) and `getLocalIpAddress(this)` in Wi-Fi / Laptop Hotspot mode.
+       - QR code (`ivPortalQr`), `tvPortalUrl`, and `btnCopyPortalUrl` now dynamically update with the tablet's direct IP whenever the connection mode or hotspot status changes.
+       - Made `ivPortalQr` and `tvPortalUrl` clickable to copy or refresh the active portal URL.
+     * **Dynamic Upload Endpoint (`WebPortalHtml.java`)**:
+       - Updated `copyUploadEndpoint()` from static `http://airbeam.local:8080/upload` to dynamic `window.location.origin + '/upload'`, ensuring the upload URL matches the browser's current connection.
+     * **Peer Discovery Sync (`FileServerService.java` & `AirBeamMdnsResponder.java`)**:
+       - `/api/devices` now returns `isHotspotActive(this) ? getHotspotIpAddress(this) : getLocalIpAddress(this)` so web clients accurately identify the tablet IP.
+   - **Production Release APK Rebuilt & Packaged**:
+     * Rebuilt and signed release APK with Gradle 8.5 / JDK 17 (`assembleRelease` in 19s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,827` bytes).

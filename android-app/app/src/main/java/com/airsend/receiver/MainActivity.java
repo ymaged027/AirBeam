@@ -180,7 +180,16 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         btnClearStaged = findViewById(R.id.btnClearStaged);
 
         if (btnCopyPortalUrl != null) {
-            btnCopyPortalUrl.setOnClickListener(v -> copyToClipboard("Web Portal URL", "http://airbeam.local:8080"));
+            btnCopyPortalUrl.setOnClickListener(v -> copyToClipboard("Web Portal URL", getActivePortalUrl()));
+        }
+        if (ivPortalQr != null) {
+            ivPortalQr.setOnClickListener(v -> {
+                generatePortalQrCode();
+                Toast.makeText(this, "Refreshed Web Portal QR (" + getActivePortalUrl() + ")", Toast.LENGTH_SHORT).show();
+            });
+        }
+        if (tvPortalUrl != null) {
+            tvPortalUrl.setOnClickListener(v -> copyToClipboard("Web Portal URL", getActivePortalUrl()));
         }
         if (btnStageFiles != null) {
             btnStageFiles.setOnClickListener(v -> openFilePickerToStage());
@@ -328,6 +337,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                     tvHotspotSwitchSubtitle.setTextColor(0xFF94A3B8);
                 }
             }
+            generatePortalQrCode();
             isUpdatingSwitchFromSystem = false;
         });
     }
@@ -376,6 +386,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         }
         updateServerStatus(true);
         syncHotspotState();
+        generatePortalQrCode();
     }
 
     private void updateModeUi() {
@@ -481,7 +492,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     private void updateServerStatus(boolean running) {
         runOnUiThread(() -> {
             if (running) {
-                String ip = FileServerService.getLocalIpAddress(this);
+                String ip = FileServerService.isHotspotActive(this) ? FileServerService.getHotspotIpAddress(this) : FileServerService.getLocalIpAddress(this);
                 if (ip == null || ip.equals("127.0.0.1")) {
                     ip = "10.150.131.50";
                 }
@@ -662,11 +673,24 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         }).start();
     }
 
+    public String getActivePortalUrl() {
+        String ip = null;
+        if (MODE_TABLET_HOTSPOT.equals(currentMode) || FileServerService.isHotspotActive(this)) {
+            ip = FileServerService.getHotspotIpAddress(this);
+        } else {
+            ip = FileServerService.getLocalIpAddress(this);
+        }
+        if (ip != null && !ip.isEmpty() && !ip.equals("127.0.0.1") && !ip.startsWith("169.254.")) {
+            return "http://" + ip + ":" + FileServerService.PORT;
+        }
+        return "http://airbeam.local:" + FileServerService.PORT;
+    }
+
     private void generatePortalQrCode() {
         if (ivPortalQr == null) return;
         new Thread(() -> {
             try {
-                String url = "http://airbeam.local:" + FileServerService.PORT;
+                String url = getActivePortalUrl();
                 QRCodeWriter writer = new QRCodeWriter();
                 BitMatrix bitMatrix = writer.encode(
                         url,
@@ -685,6 +709,12 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                 runOnUiThread(() -> {
                     if (ivPortalQr != null) {
                         ivPortalQr.setImageBitmap(bmp);
+                    }
+                    if (tvPortalUrl != null) {
+                        tvPortalUrl.setText(url);
+                    }
+                    if (btnCopyPortalUrl != null) {
+                        btnCopyPortalUrl.setOnClickListener(v -> copyToClipboard("Web Portal URL", url));
                     }
                 });
             } catch (Exception e) {

@@ -120,7 +120,7 @@ public class AirBeamMdnsResponder {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     multicastSocket.receive(packet);
 
-                    String currentIp = FileServerService.getLocalIpAddress(context);
+                    String currentIp = FileServerService.isHotspotActive(context) ? FileServerService.getHotspotIpAddress(context) : FileServerService.getLocalIpAddress(context);
                     if (currentIp == null || currentIp.isEmpty() || currentIp.equals("127.0.0.1")) {
                         continue;
                     }
@@ -245,7 +245,7 @@ public class AirBeamMdnsResponder {
                     Thread.sleep(15000);
                     if (!isRunning || multicastSocket == null || multicastSocket.isClosed()) break;
 
-                    String currentIp = FileServerService.getLocalIpAddress(context);
+                    String currentIp = FileServerService.isHotspotActive(context) ? FileServerService.getHotspotIpAddress(context) : FileServerService.getLocalIpAddress(context);
                     if (currentIp != null && !currentIp.isEmpty() && !currentIp.equals("127.0.0.1")) {
                         byte[] responseBytes = buildMdnsAnswerPacket(currentIp);
                         if (responseBytes != null) {

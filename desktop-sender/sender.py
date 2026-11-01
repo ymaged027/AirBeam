@@ -1016,8 +1016,7 @@ def find_hotspot_device_ip():
     probe_candidates = []
     gw = get_wifi_gateway_ip()
     if gw and gw not in probe_candidates and not gw.startswith(('127.', '169.254.', '0.')):
-        if gw.startswith(('192.168.43.', '192.168.137.', '172.20.10.')):
-            probe_candidates.append(gw)
+        probe_candidates.append(gw)
 
     for ip in ("192.168.43.1", "10.150.131.50"):
         if ip not in probe_candidates:
@@ -2566,7 +2565,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                             <div class="file-name" title="${f.name}">${f.name}</div>
                             <div class="file-size">${f.formatted_size}</div>
                         </div>
-                        <a href="/download/${f.index}" class="btn-download" download="${f.name}" onclick="acquireWakeLock()">⬇️ Download</a>
+                        <a href="${getTargetBaseUrl() ? (getTargetBaseUrl() + '/download?id=' + f.index) : ('/download/' + f.index)}" class="btn-download" download="${f.name}" onclick="acquireWakeLock()">⬇️ Download</a>
                     </div>
                 `;
             });
@@ -2613,7 +2612,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             if (stagedFiles.length === 0) return;
             await acquireWakeLock();
             const a = document.createElement('a');
-            a.href = '/download-all.zip';
+            a.href = (getTargetBaseUrl() || '') + '/download-all.zip';
             a.download = `AirBeam_Staged_Files_${Date.now()}.zip`;
             document.body.appendChild(a);
             a.click();
@@ -3977,6 +3976,20 @@ class AirBeamMDNSResponder:
         if client_ip.startswith('172.20.10.'):
             for if_ip, _ in interfaces:
                 if if_ip.startswith('172.20.10.'):
+                    return if_ip
+
+        # Tablet / Android Hotspot client (192.168.43.x)
+        if client_ip.startswith('192.168.43.'):
+            for if_ip, _ in interfaces:
+                if if_ip.startswith('192.168.43.'):
+                    return if_ip
+
+        # Any matching /24 subnet prefix
+        parts = client_ip.split('.')
+        if len(parts) == 4:
+            pfx = f"{parts[0]}.{parts[1]}.{parts[2]}."
+            for if_ip, _ in interfaces:
+                if if_ip.startswith(pfx):
                     return if_ip
 
         cur_app_ip = getattr(self.app, "local_ip", None)
@@ -5757,7 +5770,7 @@ class AirBeamSenderApp(BaseTkApp):
             if qr_sw and getattr(qr_sw, "state", False):
                 cur_ip = get_local_ip()
                 active_url = getattr(self, "active_opt2_portal_url", "")
-                expected_url = self.get_universal_portal_url()
+                expected_url = f"http://{cur_ip}:{self.iphone_portal_port}" if (cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254.")) else self.get_universal_portal_url()
                 if cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254.") and active_url != expected_url:
                     self.active_opt2_portal_url = expected_url
                     img_portal = self.generate_qr_image(expected_url, box_size=4, border=2)
@@ -7566,7 +7579,7 @@ class AirBeamSenderApp(BaseTkApp):
                     pwd = res.get("passphrase", "airbeam123").strip()
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
-                    portal_url = self.get_universal_portal_url()
+                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}"
                     self.active_pc_hotspot_wifi_str = wifi_qr
                     self.active_pc_hotspot_portal_url = portal_url
                     img_wifi = self.generate_qr_image(wifi_qr, box_size=3, border=2)
@@ -7626,7 +7639,7 @@ class AirBeamSenderApp(BaseTkApp):
             self.qr_pc_hotspot_portal_label.image = dummy_portal
 
     def copy_pc_hotspot_url(self):
-        url = self.get_universal_portal_url()
+        url = getattr(self, "active_pc_hotspot_portal_url", None) or f"http://192.168.137.1:{self.iphone_portal_port}"
         self.clipboard_clear()
         self.clipboard_append(url)
         if hasattr(self, "btn_copy_pc_hotspot_url"):
@@ -7734,7 +7747,7 @@ class AirBeamSenderApp(BaseTkApp):
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
 
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
-                    portal_url = self.get_universal_portal_url()
+                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}"
                     self.active_win_hotspot_wifi_str = wifi_qr
                     self.active_win_hotspot_portal_url = portal_url
 
@@ -7744,7 +7757,7 @@ class AirBeamSenderApp(BaseTkApp):
                     def update_ui():
                         self.lbl_ios_win_hotspot_state.config(text=f"ON — Active at {host_ip} (5 GHz)", fg="#10b981")
                         self.lbl_ios_win_hotspot_creds.config(
-                            text=f"SSID: {ssid}  •  Password: {pwd}  •  Direct URL: {portal_url}",
+                            text=f"SSID: {ssid}  •  Password: {pwd}  •  Direct URL: {portal_url} (or http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port})",
                             fg="#38bdf8"
                         )
                         if img_wifi:
@@ -7935,7 +7948,7 @@ class AirBeamSenderApp(BaseTkApp):
                     host_ip = res.get("host_ip", "192.168.137.1").strip()
 
                     wifi_qr = f"WIFI:T:WPA;S:{ssid};P:{pwd};;"
-                    portal_url = self.get_universal_portal_url()
+                    portal_url = f"http://{host_ip}:{self.iphone_portal_port}"
                     self.active_win_hotspot_wifi_str = wifi_qr
                     self.active_win_hotspot_portal_url = portal_url
 
@@ -7948,7 +7961,7 @@ class AirBeamSenderApp(BaseTkApp):
                         self.lbl_offline_hotspot_state.config(text="Offline Hotspot (Loopback): ON", fg="#10b981")
                         self.lbl_ios_win_hotspot_state.config(text=f"ON — Loopback at {host_ip}", fg="#10b981")
                         self.lbl_ios_win_hotspot_creds.config(
-                            text=f"SSID: {ssid}  •  Password: {pwd}  •  Direct URL: {portal_url}",
+                            text=f"SSID: {ssid}  •  Password: {pwd}  •  Direct URL: {portal_url} (or http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port})",
                             fg="#38bdf8"
                         )
                         if img_wifi:
@@ -8154,14 +8167,14 @@ class AirBeamSenderApp(BaseTkApp):
         except Exception:
             pass
 
-        portal_url = self.get_universal_portal_url()
+        portal_url = f"http://{host_ip}:{self.iphone_portal_port}"
         self.active_win_hotspot_portal_url = portal_url
         img = self.generate_qr_image(portal_url, box_size=4, border=2)
         if img:
             self.qr_ios_portal_label.config(image=img)
             self.qr_ios_portal_label.image = img
-            self.lbl_ios_win_hotspot_creds.config(text=f"Direct URL: {portal_url}")
-        messagebox.showinfo("Hotspot Refreshed", f"Windows Hotspot Portal refreshed at:\n{portal_url}")
+            self.lbl_ios_win_hotspot_creds.config(text=f"Direct URL: {portal_url} (or http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port})")
+        messagebox.showinfo("Hotspot Refreshed", f"Windows Hotspot Portal refreshed at:\n{portal_url}\n\nDirect IP QR code ensures instant connection on mobile devices!")
 
     def build_opt2_disconnected_view(self):
         for widget in self.opt2_action_frame.winfo_children():
@@ -8270,7 +8283,7 @@ class AirBeamSenderApp(BaseTkApp):
         url_badge = tk.Frame(info_box, bg="#1e293b", padx=8, pady=5, highlightthickness=1, highlightbackground="#0284c7")
         url_badge.pack(fill="x", pady=(0, 6))
         tk.Label(
-            url_badge, text=f"🌐 Web Portal URL: {portal_url}",
+            url_badge, text=f"🌐 Web Portal URL: {portal_url}  (or http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port})",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9, "bold"), anchor="w"
         ).pack(side="left")
 
@@ -8546,7 +8559,7 @@ class AirBeamSenderApp(BaseTkApp):
                     pass
 
                 is_valid_ip = bool(cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254."))
-                portal_url = self.get_universal_portal_url()
+                portal_url = f"http://{cur_ip}:{self.iphone_portal_port}" if is_valid_ip else self.get_universal_portal_url()
                 self.active_opt2_portal_url = portal_url
                 img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
 
@@ -8601,7 +8614,7 @@ class AirBeamSenderApp(BaseTkApp):
                 pass
 
             is_valid_ip = bool(cur_ip and not cur_ip.startswith("127.") and not cur_ip.startswith("169.254."))
-            portal_url = self.get_universal_portal_url()
+            portal_url = f"http://{cur_ip}:{self.iphone_portal_port}" if is_valid_ip else self.get_universal_portal_url()
             self.active_opt2_portal_url = portal_url
             img_portal = self.generate_qr_image(portal_url, box_size=4, border=2)
 
@@ -8772,12 +8785,12 @@ class AirBeamSenderApp(BaseTkApp):
 
     def refresh_ios_qr_codes(self):
         ip = get_local_ip()
-        portal_url = self.get_universal_portal_url()
+        portal_url = f"http://{ip}:{self.iphone_portal_port}" if (ip and not ip.startswith("127.")) else self.get_universal_portal_url()
         img = self.generate_qr_image(portal_url, box_size=4, border=2)
         if img:
             self.qr_ios_portal_label.config(image=img)
             self.qr_ios_portal_label.image = img
-            self.lbl_ios_win_hotspot_creds.config(text=f"Direct Portal URL: {portal_url}")
+            self.lbl_ios_win_hotspot_creds.config(text=f"Direct Portal URL: {portal_url} (or http://{AIRBEAM_LOCAL_HOST}:{self.iphone_portal_port})")
         messagebox.showinfo("Portal Refreshed", f"iOS Portal QR Code refreshed for IP: {ip}\nURL: {portal_url}")
 
     def get_clipboard_safe(self):
@@ -9117,7 +9130,7 @@ class AirBeamSenderApp(BaseTkApp):
                 return
             # Tablet is on router, but user chose Tablet Hotspot! Do NOT start laptop hotspot!
             current = self.entry_ip.get().strip()
-            if not current or current.startswith("Searching"):
+            if not current or current.startswith("Searching") or current == ip:
                 self.entry_ip.delete(0, tk.END)
                 self.entry_ip.insert(0, "10.150.131.50")
             if self.hotspot_state != "CONNECTED":

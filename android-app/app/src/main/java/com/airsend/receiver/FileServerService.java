@@ -1058,7 +1058,8 @@ public class FileServerService extends Service {
                     JSONObject curr = new JSONObject();
                     curr.put("type", "tablet");
                     curr.put("name", Build.MANUFACTURER + " " + Build.MODEL);
-                    curr.put("ip", getLocalIpAddress(this));
+                    String curDevIp = isHotspotActive(this) ? getHotspotIpAddress(this) : getLocalIpAddress(this);
+                    curr.put("ip", curDevIp);
                     curr.put("port", PORT);
                     devObj.put("current", curr);
                     if (discoveredPcIp != null && !discoveredPcIp.isEmpty()) {
