@@ -71,7 +71,7 @@
                     android:layout_weight="1"
                     android:layout_marginEnd="4dp"
                     android:backgroundTint="#0284C7"
-                    android:text="📱 Tablet Hotspot"
+                    android:text="📱 Android Hotspot"
                     android:textAllCaps="false"
                     android:textSize="11sp"
                     android:textColor="#FFFFFF" />
@@ -100,7 +100,7 @@
                     android:textColor="#94A3B8" />
             </LinearLayout>
 
-            <!-- Tablet Hotspot Credentials Box & Interactive Toggle Switch Row -->
+            <!-- Android Hotspot Credentials Box & Interactive Toggle Switch Row -->
             <LinearLayout
                 android:id="@+id/layoutHotspotHelper"
                 android:layout_width="match_parent"
@@ -114,7 +114,7 @@
                     android:id="@+id/tvModeDescription"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Tablet Hotspot Setup (SSID: airbeam | Pass: airbeam123):"
+                    android:text="Android Hotspot Setup (SSID: airbeam | Pass: airbeam123):"
                     android:textColor="#38BDF8"
                     android:textSize="12sp"
                     android:textStyle="bold"
@@ -393,6 +393,18 @@
                 android:background="#162032"
                 android:padding="10dp"
                 android:layout_marginTop="2dp">
+
+                <Button
+                    android:id="@+id/btnSendToPc"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginBottom="10dp"
+                    android:backgroundTint="#059669"
+                    android:text="💻 Send Files to PC"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFF" />
 
                 <TextView
                     android:id="@+id/tvStagedCount"

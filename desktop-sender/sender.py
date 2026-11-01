@@ -2354,7 +2354,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             </button>
             <button id="pillTablet" class="device-pill" onclick="switchTargetDevice('tablet')">
                 <span>📱</span>
-                <span id="pillTabletLabel">Samsung Tablet</span>
+                <span id="pillTabletLabel">Android Device</span>
             </button>
         </div>
     </div>
@@ -2462,7 +2462,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         function getTargetBaseUrl() {
             if (!detectedDevices || !detectedDevices.peer) return '';
-            if (currentTargetDevice === 'tablet' && detectedDevices.peer && detectedDevices.peer.type === 'tablet') {
+            if ((currentTargetDevice === 'tablet' || currentTargetDevice === 'android') && detectedDevices.peer && (detectedDevices.peer.type === 'tablet' || detectedDevices.peer.type === 'android')) {
                 return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);
             }
             return '';
@@ -2477,7 +2477,7 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
                 if (detectedDevices && detectedDevices.peer) {
                     bar.style.display = 'flex';
                     const pcName = (detectedDevices.current && detectedDevices.current.type === 'pc') ? detectedDevices.current.name : 'Windows PC';
-                    const tabletName = (detectedDevices.peer && detectedDevices.peer.type === 'tablet') ? detectedDevices.peer.name : 'Samsung Tablet';
+                    const tabletName = (detectedDevices.peer && (detectedDevices.peer.type === 'tablet' || detectedDevices.peer.type === 'android')) ? detectedDevices.peer.name : 'Android Device';
                     document.getElementById('pillPCLabel').innerText = pcName;
                     document.getElementById('pillTabletLabel').innerText = tabletName;
 
@@ -2501,13 +2501,13 @@ IOS_HTML_TEMPLATE = r"""<!DOCTYPE html>
             const stagedTitle = document.getElementById('stagedCardTitle');
             const targetStatusText = document.getElementById('targetStatusText');
 
-            if (target === 'tablet') {
+            if (target === 'tablet' || target === 'android') {
                 if (pillPC) pillPC.classList.remove('active');
                 if (pillTablet) pillTablet.classList.add('active');
-                if (uploadTitle) uploadTitle.innerText = '📸 Send to Samsung Tablet';
-                if (stagedTitle) stagedTitle.innerText = '📥 Files from Samsung Tablet';
-                if (targetStatusText) targetStatusText.innerText = '● Samsung Tablet Selected';
-                showToast('Target: Samsung Tablet');
+                if (uploadTitle) uploadTitle.innerText = '📸 Send to Android';
+                if (stagedTitle) stagedTitle.innerText = '📥 Files from Android';
+                if (targetStatusText) targetStatusText.innerText = '● Android Selected';
+                showToast('Target: Android');
             } else {
                 if (pillPC) pillPC.classList.add('active');
                 if (pillTablet) pillTablet.classList.remove('active');
@@ -3086,7 +3086,7 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
         clean_path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
-        if clean_path in ('/', '/index.html'):
+        if clean_path in ('', '/', '/index.html'):
             content = IOS_HTML_TEMPLATE.encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -3094,6 +3094,14 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(content)
+            return
+
+        elif clean_path in ('/upload', '/upload/'):
+            # If user opens or pastes /upload in browser, redirect directly to the Web Portal
+            self.send_response(302)
+            self.send_header('Location', '/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
             return
 
         elif clean_path in ('/airbeam.shortcut', '/shortcut'):
@@ -3178,8 +3186,8 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                     "port": srv_port
                 },
                 "peer": {
-                    "type": "tablet",
-                    "name": "Samsung Tablet",
+                    "type": "android",
+                    "name": "Android Device",
                     "ip": tablet_ip,
                     "port": 8080
                 } if is_valid_tablet else None
@@ -3357,16 +3365,20 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                                 idx = i
                                 break
                 if idx is None:
-                    self.send_error(400, "Missing or invalid file index")
+                    self.send_response(302)
+                    self.send_header('Location', '/')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
                     return
                 selected = getattr(self.app, "selected_files", [])
-                if idx < 0 or idx >= len(selected):
-                    self.send_error(404, "File index out of range")
+                if idx < 0 or idx >= len(selected) or not os.path.exists(selected[idx]):
+                    # Redirect to portal root so browser displays fresh staged file list without 404 error
+                    self.send_response(302)
+                    self.send_header('Location', '/')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
                     return
                 filepath = selected[idx]
-                if not os.path.exists(filepath):
-                    self.send_error(404, "File not found on disk")
-                    return
 
                 total_size = os.path.getsize(filepath)
                 filename = os.path.basename(filepath)
@@ -5824,7 +5836,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         target = self.entry_ip.get().strip()
         if not target or target.startswith("Searching"):
-            messagebox.showwarning("No Target", "Target device IP not found. Connect to tablet first.")
+            messagebox.showwarning("No Target", "Target device IP not found. Connect to Android first.")
             return
 
         def bg_beam():
@@ -5840,7 +5852,7 @@ class AirBeamSenderApp(BaseTkApp):
                 preview = text.strip()
                 if len(preview) > 60:
                     preview = preview[:60] + "..."
-                self.after(0, lambda: messagebox.showinfo("Clipboard Beamed", f"Successfully beamed to tablet:\n\n{preview}"))
+                self.after(0, lambda: messagebox.showinfo("Clipboard Beamed", f"Successfully beamed to Android:\n\n{preview}"))
             except Exception as ex:
                 self.after(0, lambda: messagebox.showerror("Clipboard Error", f"Failed to beam clipboard: {ex}"))
 
@@ -5911,7 +5923,7 @@ class AirBeamSenderApp(BaseTkApp):
             else:
                 self.after(0, lambda: (
                     self.lbl_device_status.config(
-                        text="Could not connect to 'airbeam'. Make sure Hotspot is ON on tablet.",
+                        text="Could not connect to 'airbeam'. Make sure Hotspot is ON on Android.",
                         style="StatusPending.TLabel"
                     ),
                     self.hotspot_switch.set_state(False, trigger_callback=False),
@@ -6278,8 +6290,8 @@ class AirBeamSenderApp(BaseTkApp):
         self.opt2_card = ttk.Frame(self.mobile_mode_container, style="Card.TFrame", padding=14)
         opt2_card = self.opt2_card
 
-        ttk.Label(opt2_card, text="Option 3: 📱 Connect PC to Phone / Tablet Personal Hotspot (Phone Hotspot ➔ PC)", style="CardHeader.TLabel").pack(anchor="w")
-        ttk.Label(opt2_card, text="Turn ON Personal Hotspot on your phone/tablet, connect your PC to it via Windows Wi-Fi, then flip the toggle switch to reveal your Web Portal QR code.", style="CardBody.TLabel").pack(anchor="w", pady=(2, 8))
+        ttk.Label(opt2_card, text="Option 3: 📱 Connect PC to Phone / Android Personal Hotspot (Android Hotspot ➔ PC)", style="CardHeader.TLabel").pack(anchor="w")
+        ttk.Label(opt2_card, text="Turn ON Personal Hotspot on your phone/Android, connect your PC to it via Windows Wi-Fi, then flip the toggle switch to reveal your Web Portal QR code.", style="CardBody.TLabel").pack(anchor="w", pady=(2, 8))
 
         # Controls Bar: Switch + Status Label + Quick Action Buttons (Open Wi-Fi, Refresh IP/QR, Port Switcher)
         opt2_ctrl_frame = tk.Frame(opt2_card, bg="#1e293b")
@@ -6360,7 +6372,7 @@ class AirBeamSenderApp(BaseTkApp):
         tk.Label(mode_frame, text="Mode:", bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
 
         self.btn_mode_tablet = tk.Button(
-            mode_frame, text="📱 Tablet Hotspot",
+            mode_frame, text="📱 Android Hotspot",
             bg="#0284c7", fg="#ffffff", font=("Segoe UI", 9, "bold"),
             relief="flat", bd=0, padx=10, pady=5, cursor="hand2",
             command=lambda: self.set_connection_mode("TABLET_HOTSPOT")
@@ -6388,7 +6400,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         self.lbl_mode_desc = tk.Label(
             android_app_card,
-            text="📱 Tablet Hotspot: SSID 'airbeam' | Pass 'airbeam123' (50-95+ MB/s). Use the toggle switch below to connect!",
+            text="📱 Android Hotspot: SSID 'airbeam' | Pass 'airbeam123' (50-95+ MB/s). Use the toggle switch below to connect!",
             bg="#1e293b", fg="#38bdf8", font=("Segoe UI", 9), anchor="w"
         )
         self.lbl_mode_desc.pack(fill="x", pady=(2, 6))
@@ -6666,7 +6678,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         if mode == "TABLET_HOTSPOT":
             self.lbl_mode_desc.config(
-                text="📱 Tablet Hotspot: Connect PC to tablet Wi-Fi. Target: 10.150.131.50",
+                text="📱 Android Hotspot: Connect PC to Android Wi-Fi. Target: 10.150.131.50",
                 fg="#38bdf8"
             )
             self.btn_action_aux.config(text="🔍 Detect", command=self.manual_detect)
@@ -6679,13 +6691,13 @@ class AirBeamSenderApp(BaseTkApp):
                 self.entry_ip.delete(0, tk.END)
                 self.entry_ip.insert(0, "10.150.131.50")
             self.lbl_device_status.config(
-                text="📱 Tablet Hotspot mode. Use the toggle switch above to connect.",
+                text="📱 Android Hotspot mode. Use the toggle switch above to connect.",
                 style="StatusPending.TLabel"
             )
 
         elif mode == "LAPTOP_HOTSPOT":
             self.lbl_mode_desc.config(
-                text="💻 Laptop Hotspot: PC creates 5 GHz 'joe' hotspot and connects tablet automatically.",
+                text="💻 Laptop Hotspot: PC creates 5 GHz 'joe' hotspot and connects Android automatically.",
                 fg="#a78bfa"
             )
             self.btn_action_aux.config(text="⚡ Start Hotspot", command=lambda: self.trigger_hotspot_handover("5GHz"))
@@ -6715,14 +6727,14 @@ class AirBeamSenderApp(BaseTkApp):
             self.entry_ip.delete(0, tk.END)
             self.entry_ip.insert(0, target_ip)
             self.lbl_device_status.config(
-                text=f"Ready on Home Wi-Fi: Tablet IP {target_ip}",
+                text=f"Ready on Home Wi-Fi: Android IP {target_ip}",
                 style="StatusSuccess.TLabel"
             )
 
     def manual_detect(self):
         mode = self.connection_mode.get()
         if mode == "TABLET_HOTSPOT":
-            self.lbl_device_status.config(text="Probing tablet (10.150.131.50)...", style="StatusPending.TLabel")
+            self.lbl_device_status.config(text="Probing Android (10.150.131.50)...", style="StatusPending.TLabel")
         elif mode == "LAPTOP_HOTSPOT":
             self.trigger_hotspot_handover("5GHz")
         else:
@@ -6744,7 +6756,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.entry_ip.delete(0, tk.END)
         self.entry_ip.insert(0, ip)
         self.lbl_device_status.config(
-            text=f"🚀 Tablet 5 GHz Hotspot: {model} ({ip}) — 50-95+ MB/s Active!",
+            text=f"🚀 Android 5 GHz Hotspot: {model} ({ip}) — 50-95+ MB/s Active!",
             style="StatusHotspot.TLabel"
         )
 
@@ -7674,7 +7686,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         apk_filename = os.path.basename(self.apk_path) if self.apk_path else ("AirBeam-v5.2-Receiver.apk" if os.path.exists(os.path.join(APP_ROOT, "AirBeam-v5.2-Receiver.apk")) else "AirBeam-v5.0-Receiver.apk")
         ttk.Label(container, text=f"Install {apk_filename} on Android", style="CardHeader.TLabel").pack(anchor="center")
-        ttk.Label(container, text="Scan with your tablet camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
+        ttk.Label(container, text="Scan with your Android camera or browser to download the updated APK with App Hotspot & Mode Selector!", style="CardBody.TLabel").pack(anchor="center", pady=(4, 16))
 
         apk_url = f"http://{self.local_ip}:{APK_SERVER_PORT}/download"
         self.apk_download_url = apk_url
@@ -8204,12 +8216,12 @@ class AirBeamSenderApp(BaseTkApp):
         h_frame.pack(fill="x", pady=(0, 6))
 
         tk.Label(
-            h_frame, text="📱 How Option 3 Works (Phone / Tablet Personal Hotspot ➔ PC):",
+            h_frame, text="📱 How Option 3 Works (Phone / Android Personal Hotspot ➔ PC):",
             bg="#0f172a", fg="#38bdf8", font=("Segoe UI", 9, "bold")
         ).pack(side="left")
 
         steps = [
-            "1️⃣  On your Phone / Tablet: Turn ON Personal Hotspot in Settings (iPhone: 'Allow Others to Join' | Android: 'Portable Hotspot').",
+            "1️⃣  On your Phone / Android: Turn ON Personal Hotspot in Settings (iPhone: 'Allow Others to Join' | Android: 'Portable Hotspot').",
             "2️⃣  On your PC: Connect Windows Wi-Fi to your phone's hotspot (click [ 📶 Open Wi-Fi Menu ] above).",
             "3️⃣  Flip Switch ON: Turn the toggle switch ON above. Your AirBeam Web Portal QR code and direct link appear right here to start ultra-fast transfers!"
         ]
@@ -8346,7 +8358,7 @@ class AirBeamSenderApp(BaseTkApp):
         guide_box.pack(fill="x")
 
         guide_steps = [
-            ("📸 Step 1:", "Open Camera on your Phone/Tablet and scan the QR code to open the Web Portal."),
+            ("📸 Step 1:", "Open Camera on your Phone/Android and scan the QR code to open the Web Portal."),
             ("📥 Step 2 (PC ➔ Mobile):", "Click '+ Add Files for Mobile' below on PC; they appear instantly in browser to Download."),
             ("📤 Step 3 (Mobile ➔ PC):", "In phone browser, tap 'Upload Photos/Files' — they stream to 'Received_From_Mobile/'!"),
             ("📋 Step 4 (Clipboard):", "Sync copied text or links between devices with one tap using clipboard buttons.")
@@ -8495,7 +8507,7 @@ class AirBeamSenderApp(BaseTkApp):
         guide_box.pack(fill="x")
 
         guide_steps = [
-            ("📸 Step 1:", f"Ensure phone or tablet is on '{cur_wifi}'. Scan QR with Camera → Tap link."),
+            ("📸 Step 1:", f"Ensure phone or Android is on '{cur_wifi}'. Scan QR with Camera → Tap link."),
             ("📥 Step 2 (PC ➔ Phone):", "Click '+ Add Files' below on PC; they appear instantly in browser!"),
             ("📤 Step 3 (Phone ➔ PC):", "In mobile browser, tap 'Upload Photos/Files' — saves straight to PC!"),
             ("🔒 'Secure Connection' Error?:", "Make sure link starts with 'http://' (NOT 'https://'). If Chrome forces HTTPS, click '🔀 Port' to switch to 8090, or open an Incognito tab!"),
@@ -9352,19 +9364,19 @@ class AirBeamSenderApp(BaseTkApp):
 
             if mode == "TABLET_HOTSPOT" or is_on_airbeam:
                 self.after(0, lambda: messagebox.showerror(
-                    "Tablet Hotspot Not Reachable",
+                    "Android Hotspot Not Reachable",
                     f"Could not connect to tablet at {target or '192.168.43.1'}.\n\n"
                     "Please check:\n"
                     "1. Is Mobile Hotspot turned ON on your Samsung tablet (5 GHz preferred)?\n"
                     "2. Is your PC Wi-Fi connected to 'airbeam'?\n"
-                    "3. Is the AirBeam Receiver app open on your tablet screen?"
+                    "3. Is the AirBeam Receiver app open on your Android screen?"
                 ))
             elif mode == "LAPTOP_HOTSPOT":
                 self.after(0, lambda: self.lbl_device_status.config(text="Scanning Laptop Hotspot subnet...", style="StatusPending.TLabel"))
                 hip = find_hotspot_device_ip()
                 if hip:
                     self.after(0, lambda: self.on_hotspot_ready("samsung SM-T505N", hip))
-                    self.after(0, lambda: messagebox.showinfo("Found Hotspot Device", f"Found tablet at {hip}:7777!\nReady to beam."))
+                    self.after(0, lambda: messagebox.showinfo("Found Hotspot Device", f"Found Android at {hip}:7777!\nReady to beam."))
                 else:
                     self.after(0, lambda: messagebox.showerror(
                         "Device Not Found",
@@ -9424,7 +9436,7 @@ class AirBeamSenderApp(BaseTkApp):
         self.btn_send.config(state="disabled", text="Beaming 50-95+ MB/s...")
         self.btn_pause.config(state="normal", text="⏸ Pause")
         self.btn_cancel.config(state="normal")
-        self.lbl_progress.config(text="Connecting to tablet socket...")
+        self.lbl_progress.config(text="Connecting to Android socket...")
 
         def runner():
             nonlocal target
@@ -9553,7 +9565,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         if error_count == 0:
             dur_text = f" in {duration:.1f}s" if duration > 0 else ""
-            stats_msg = f"Successfully beamed {total} file(s) ({format_bytes(total_bytes)}){dur_text}!\n\n⚡ Average Speed: {avg_str}\n🚀 Peak Speed: {peak_str}" if avg_spd > 0 else f"Successfully beamed {total} files to Android tablet!"
+            stats_msg = f"Successfully beamed {total} file(s) ({format_bytes(total_bytes)}){dur_text}!\n\n⚡ Average Speed: {avg_str}\n🚀 Peak Speed: {peak_str}" if avg_spd > 0 else f"Successfully beamed {total} files to Android!"
             self.after(0, lambda: (
                 self.lbl_progress.config(text=f"All {total} files transferred successfully at max speed!"),
                 messagebox.showinfo("Success", stats_msg)
@@ -9575,8 +9587,8 @@ class AirBeamSenderApp(BaseTkApp):
         is_direct_hotspot = is_tablet_hotspot or is_laptop_hotspot
 
         if is_tablet_hotspot:
-            mode_desc = "Tablet-Hosted 5 GHz Mobile Hotspot ('airbeam')"
-            band_analysis = f"Operating on Tablet 5 GHz Hotspot ('airbeam' at {target}). Full 433–866 Mbps PHY / 60–95+ MB/s. Router bypassed!"
+            mode_desc = "Android-Hosted 5 GHz Mobile Hotspot ('airbeam')"
+            band_analysis = f"Operating on Android 5 GHz Hotspot ('airbeam' at {target}). Full 433–866 Mbps PHY / 60–95+ MB/s. Router bypassed!"
         elif is_laptop_hotspot:
             mode_desc = f"Laptop Direct Hotspot ({self.current_handover_band})"
             band_analysis = f"Operating on Windows Hotspot ({self.current_handover_band}). Router bypassed."

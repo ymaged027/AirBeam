@@ -284,7 +284,7 @@ public class WebPortalHtml {
 "        <div class=\"pill-group\">\n" +
 "            <button id=\"pillTablet\" class=\"device-pill active\" onclick=\"switchTargetDevice('tablet')\">\n" +
 "                <span>📱</span>\n" +
-"                <span id=\"pillTabletLabel\">Samsung Tablet</span>\n" +
+"                <span id=\"pillTabletLabel\">Android Device</span>\n" +
 "            </button>\n" +
 "            <button id=\"pillPC\" class=\"device-pill\" onclick=\"switchTargetDevice('pc')\">\n" +
 "                <span>💻</span>\n" +
@@ -396,7 +396,7 @@ public class WebPortalHtml {
 "\n" +
 "        function getTargetBaseUrl() {\n" +
 "            if (!detectedDevices || !detectedDevices.peer) return '';\n" +
-"            if (detectedDevices.current && detectedDevices.current.type === 'tablet' && currentTargetDevice === 'pc') {\n" +
+"            if (detectedDevices.current && (detectedDevices.current.type === 'tablet' || detectedDevices.current.type === 'android') && currentTargetDevice === 'pc') {\n" +
 "                return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);\n" +
 "            }\n" +
 "            if (detectedDevices.current && detectedDevices.current.type === 'pc' && currentTargetDevice === 'tablet') {\n" +
@@ -413,7 +413,7 @@ public class WebPortalHtml {
 "                const bar = document.getElementById('deviceSwitcherBar');\n" +
 "                if (detectedDevices && detectedDevices.peer) {\n" +
 "                    bar.style.display = 'flex';\n" +
-"                    const tabletName = (detectedDevices.current && detectedDevices.current.type === 'tablet') ? detectedDevices.current.name : (detectedDevices.peer.name || 'Samsung Tablet');\n" +
+"                    const tabletName = (detectedDevices.current && (detectedDevices.current.type === 'tablet' || detectedDevices.current.type === 'android')) ? detectedDevices.current.name : (detectedDevices.peer.name || 'Android Device');\n" +
 "                    const pcName = (detectedDevices.current && detectedDevices.current.type === 'pc') ? detectedDevices.current.name : (detectedDevices.peer.name || 'Windows PC');\n" +
 "                    document.getElementById('pillTabletLabel').innerText = tabletName;\n" +
 "                    document.getElementById('pillPCLabel').innerText = pcName;\n" +
@@ -449,8 +449,8 @@ public class WebPortalHtml {
 "                if (pillPC) pillPC.classList.remove('active');\n" +
 "                if (uploadTitle) uploadTitle.innerText = '📤 Send Files to Android';\n" +
 "                if (stagedTitle) stagedTitle.innerText = '📥 Files from Android';\n" +
-"                if (targetStatusText) targetStatusText.innerText = '● Android Tablet Selected';\n" +
-"                showToast('Target: Samsung Tablet');\n" +
+"                if (targetStatusText) targetStatusText.innerText = '● Android Selected';\n" +
+"                showToast('Target: Android Device');\n" +
 "            }\n" +
 "            fetchFiles();\n" +
 "            fetchClipboard();\n" +

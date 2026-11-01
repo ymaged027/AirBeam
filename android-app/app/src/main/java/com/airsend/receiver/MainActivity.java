@@ -11,6 +11,16 @@ import android.content.ServiceConnection;
 import android.content.ClipboardManager;
 import android.content.ClipData;
 import android.net.Uri;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.BufferedOutputStream;
+import java.io.IOException;
+import android.widget.EditText;
+import android.net.DhcpInfo;
+
 import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.Looper;
@@ -98,7 +108,9 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     private TextView tvStagedCount;
     private Button btnStageFiles;
     private Button btnClearStaged;
+    private Button btnSendToPc;
     private static final int REQUEST_CODE_STAGE_FILES = 202;
+    private static final int REQUEST_CODE_SEND_TO_PC = 203;
 
     // Hotspot Wi-Fi QR Code Auto-Connect
     private LinearLayout layoutHotspotQrBox;
@@ -178,6 +190,11 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         tvStagedCount = findViewById(R.id.tvStagedCount);
         btnStageFiles = findViewById(R.id.btnStageFiles);
         btnClearStaged = findViewById(R.id.btnClearStaged);
+        btnSendToPc = findViewById(R.id.btnSendToPc);
+
+        if (btnSendToPc != null) {
+            btnSendToPc.setOnClickListener(v -> openFilePickerToSendToPc());
+        }
 
         if (btnCopyPortalUrl != null) {
             btnCopyPortalUrl.setOnClickListener(v -> copyToClipboard("Web Portal URL", getActivePortalUrl()));
@@ -411,13 +428,13 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         btnModeRouter.setTextColor(MODE_ROUTER.equals(currentMode) ? textActive : textInactive);
 
         if (MODE_TABLET_HOTSPOT.equals(currentMode)) {
-            tvModeDescription.setText("Tablet Hotspot Setup (SSID: airbeam | Pass: airbeam123):");
+            tvModeDescription.setText("Android Hotspot Setup (SSID: airbeam | Pass: airbeam123):");
             if (layoutHotspotHelper != null) layoutHotspotHelper.setVisibility(View.VISIBLE);
         } else if (MODE_LAPTOP_HOTSPOT.equals(currentMode)) {
-            tvModeDescription.setText("💻 Laptop Hotspot: On PC, click 'Start Hotspot'. Tablet connects automatically.");
+            tvModeDescription.setText("💻 Laptop Hotspot: On PC, click 'Start Hotspot'. Android connects automatically.");
             if (layoutHotspotHelper != null) layoutHotspotHelper.setVisibility(View.GONE);
         } else {
-            tvModeDescription.setText("🏠 Home Wi-Fi: Both PC and Tablet on local Wi-Fi router network.");
+            tvModeDescription.setText("🏠 Home Wi-Fi: Both PC and Android on local Wi-Fi router network.");
             if (layoutHotspotHelper != null) layoutHotspotHelper.setVisibility(View.GONE);
         }
     }
@@ -498,7 +515,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                 }
                 tvIpAddress.setText("http://" + ip + ":" + FileServerService.NIO_PORT);
                 if (ip.startsWith("192.168.43.")) {
-                    tvStatus.setText("🚀 Tablet Hotspot Active (airbeam) — 50-95+ MB/s");
+                    tvStatus.setText("🚀 Android Hotspot Active (airbeam) — 50-95+ MB/s");
                     tvStatus.setTextColor(0xFF38BDF8);
                 } else if (ip.startsWith("192.168.137.")) {
                     tvStatus.setText("🚀 Connected to Windows Hotspot (50-95+ MB/s)");
@@ -727,6 +744,164 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         }).start();
     }
 
+    private void openFilePickerToSendToPc() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQUEST_CODE_SEND_TO_PC);
+        } catch (Exception e) {
+            Toast.makeText(this, "Cannot open file picker: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void handleSendFilesToPc(List<Uri> uris) {
+        String pcIp = null;
+        if (fileServerService != null && fileServerService.getDiscoveredPcIp() != null) {
+            pcIp = fileServerService.getDiscoveredPcIp();
+        }
+        if (pcIp == null || pcIp.isEmpty() || pcIp.startsWith("127.")) {
+            try {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+                if (wm != null) {
+                    DhcpInfo dhcp = wm.getDhcpInfo();
+                    if (dhcp != null && dhcp.gateway != 0) {
+                        int g = dhcp.gateway;
+                        pcIp = String.format(Locale.US, "%d.%d.%d.%d", (g & 0xFF), ((g >> 8) & 0xFF), ((g >> 16) & 0xFF), ((g >> 24) & 0xFF));
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        final String defaultIp = (pcIp != null && !pcIp.equals("0.0.0.0")) ? pcIp : "192.168.137.1";
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("💻 Send " + uris.size() + " File(s) to PC");
+        builder.setMessage("Target Windows PC IP Address (Port 8080):");
+        final EditText input = new EditText(this);
+        input.setText(defaultIp);
+        input.setSelection(defaultIp.length());
+        builder.setView(input);
+
+        builder.setPositiveButton("Send", (dialog, which) -> {
+            String enteredIp = input.getText().toString().trim();
+            if (enteredIp.isEmpty()) enteredIp = defaultIp;
+            executeSendFilesToPcAsync(uris, enteredIp);
+        });
+        builder.setNegativeButton("Cancel", null);
+        builder.show();
+    }
+
+    private void executeSendFilesToPcAsync(List<Uri> uris, String pcIp) {
+        Toast.makeText(this, "Sending " + uris.size() + " file(s) to PC (" + pcIp + ")...", Toast.LENGTH_SHORT).show();
+        if (tvStatus != null) tvStatus.setText("🚀 Beaming files to PC (" + pcIp + ")...");
+        if (cardActiveTransfer != null) cardActiveTransfer.setVisibility(View.VISIBLE);
+        if (pbActiveTransfer != null) pbActiveTransfer.setProgress(0);
+        if (tvActivePercent != null) tvActivePercent.setText("0%");
+
+        new Thread(() -> {
+            int successCount = 0;
+            int totalCount = uris.size();
+
+            for (int i = 0; i < totalCount; i++) {
+                Uri uri = uris.get(i);
+                String displayName = "file_" + System.currentTimeMillis();
+                long fileSize = -1;
+
+                try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                    if (cursor != null && cursor.moveToFirst()) {
+                        int nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                        int sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE);
+                        if (nameIdx != -1) {
+                            String n = cursor.getString(nameIdx);
+                            if (n != null && !n.isEmpty()) displayName = n;
+                        }
+                        if (sizeIdx != -1) {
+                            fileSize = cursor.getLong(sizeIdx);
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                final String currentName = displayName;
+                final int currentIdx = i + 1;
+                final long totalBytes = fileSize;
+                runOnUiThread(() -> {
+                    if (tvStatus != null) tvStatus.setText("🚀 Sending (" + currentIdx + "/" + totalCount + "): " + currentName);
+                    if (tvActiveFileName != null) tvActiveFileName.setText("Sending to PC: " + currentName);
+                    if (pbActiveTransfer != null) pbActiveTransfer.setProgress(0);
+                    if (tvActivePercent != null) tvActivePercent.setText("0%");
+                    if (tvActiveProgressDetail != null) tvActiveProgressDetail.setText("0 B / " + (totalBytes > 0 ? formatSize(totalBytes) : "?"));
+                });
+
+                HttpURLConnection conn = null;
+                try {
+                    String encName = URLEncoder.encode(displayName, "UTF-8");
+                    URL url = new URL("http://" + pcIp + ":8080/upload?filename=" + encName + "&source=android");
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.setConnectTimeout(10000);
+                    conn.setReadTimeout(180000);
+                    conn.setRequestProperty("User-Agent", "AirBeam-Android/" + Build.MODEL);
+
+                    if (fileSize > 0) {
+                        conn.setFixedLengthStreamingMode(fileSize);
+                    } else {
+                        conn.setChunkedStreamingMode(1048576);
+                    }
+
+                    try (InputStream in = getContentResolver().openInputStream(uri);
+                         OutputStream out = new BufferedOutputStream(conn.getOutputStream(), 1048576)) {
+                        if (in == null) throw new IOException("Cannot open input stream for: " + uri);
+                        byte[] buf = new byte[1048576];
+                        long totalRead = 0;
+                        int read;
+                        while ((read = in.read(buf)) != -1) {
+                            out.write(buf, 0, read);
+                            totalRead += read;
+                            final long done = totalRead;
+                            if (totalBytes > 0) {
+                                int pct = (int) ((done * 100) / totalBytes);
+                                runOnUiThread(() -> {
+                                    if (pbActiveTransfer != null) pbActiveTransfer.setProgress(pct);
+                                    if (tvActivePercent != null) tvActivePercent.setText(pct + "%");
+                                    if (tvActiveProgressDetail != null) tvActiveProgressDetail.setText(formatSize(done) + " / " + formatSize(totalBytes));
+                                });
+                            }
+                        }
+                        out.flush();
+                    }
+
+                    int code = conn.getResponseCode();
+                    if (code >= 200 && code < 300) {
+                        successCount++;
+                    } else {
+                        Log.e("MainActivity", "Upload error for " + displayName + ", HTTP " + code);
+                    }
+                } catch (Exception e) {
+                    Log.e("MainActivity", "Error uploading file to PC: " + displayName, e);
+                } finally {
+                    if (conn != null) {
+                        try { conn.disconnect(); } catch (Exception ignored) {}
+                    }
+                }
+            }
+
+            final int finalSuccess = successCount;
+            runOnUiThread(() -> {
+                if (cardActiveTransfer != null) cardActiveTransfer.setVisibility(View.GONE);
+                if (finalSuccess == totalCount) {
+                    Toast.makeText(MainActivity.this, "✅ Successfully sent " + finalSuccess + " file(s) to PC!", Toast.LENGTH_LONG).show();
+                    if (tvStatus != null) tvStatus.setText("✅ Sent " + finalSuccess + " file(s) to PC (" + pcIp + ")");
+                } else {
+                    Toast.makeText(MainActivity.this, "⚠️ Sent " + finalSuccess + " of " + totalCount + " file(s) to PC. Check PC status.", Toast.LENGTH_LONG).show();
+                    if (tvStatus != null) tvStatus.setText("⚠️ Beamed " + finalSuccess + "/" + totalCount + " file(s) to PC");
+                }
+            });
+        }).start();
+    }
+
     private void openFilePickerToStage() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -743,7 +918,21 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_CODE_STAGE_FILES && resultCode == RESULT_OK && data != null) {
+        if (requestCode == REQUEST_CODE_SEND_TO_PC && resultCode == RESULT_OK && data != null) {
+            List<Uri> urisToSend = new ArrayList<>();
+            if (data.getClipData() != null) {
+                int count = data.getClipData().getItemCount();
+                for (int i = 0; i < count; i++) {
+                    Uri u = data.getClipData().getItemAt(i).getUri();
+                    if (u != null) urisToSend.add(u);
+                }
+            } else if (data.getData() != null) {
+                urisToSend.add(data.getData());
+            }
+            if (!urisToSend.isEmpty()) {
+                handleSendFilesToPc(urisToSend);
+            }
+        } else if (requestCode == REQUEST_CODE_STAGE_FILES && resultCode == RESULT_OK && data != null) {
             int added = 0;
             if (data.getClipData() != null) {
                 int count = data.getClipData().getItemCount();

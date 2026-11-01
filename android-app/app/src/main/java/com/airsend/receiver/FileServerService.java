@@ -792,13 +792,27 @@ public class FileServerService extends Service {
                 long filesize = json.getLong("filesize");
 
                 filename = filename.replaceAll("[\\\\/:*?\"<>|]", "_");
-                File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                if (!downloadsDir.exists()) downloadsDir.mkdirs();
+                File downloadsDir = getDownloadsDir();
                 File targetFile = getUniqueFile(downloadsDir, filename);
                 File partFile = new File(downloadsDir, targetFile.getName() + ".airbeam.part");
 
-                RandomAccessFile raf = new RandomAccessFile(partFile, "rw");
-                raf.setLength(filesize); // Pre-allocate full file length on flash storage!
+                RandomAccessFile raf = null;
+                try {
+                    raf = new RandomAccessFile(partFile, "rw");
+                    try {
+                        raf.setLength(filesize); // Pre-allocate full file length on flash storage!
+                    } catch (Throwable ignored) {}
+                } catch (Throwable e) {
+                    Log.w(TAG, "Cannot write to " + downloadsDir + ", falling back to getExternalFilesDir: " + e.getMessage());
+                    File fallbackDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                    if (fallbackDir != null && !fallbackDir.exists()) fallbackDir.mkdirs();
+                    targetFile = getUniqueFile(fallbackDir != null ? fallbackDir : getFilesDir(), filename);
+                    partFile = new File(targetFile.getParentFile(), targetFile.getName() + ".airbeam.part");
+                    raf = new RandomAccessFile(partFile, "rw");
+                    try {
+                        raf.setLength(filesize);
+                    } catch (Throwable ignored) {}
+                }
                 FileChannel fc = raf.getChannel();
 
                 TransferItem item = new TransferItem(String.valueOf(transferId), targetFile.getName(), filesize);
@@ -1092,7 +1106,7 @@ public class FileServerService extends Service {
                 } else if (uri.startsWith("/api/devices") || uri.startsWith("/api/peers")) {
                     JSONObject devObj = new JSONObject();
                     JSONObject curr = new JSONObject();
-                    curr.put("type", "tablet");
+                    curr.put("type", "android");
                     curr.put("name", Build.MANUFACTURER + " " + Build.MODEL);
                     String curDevIp = isHotspotActive(this) ? getHotspotIpAddress(this) : getLocalIpAddress(this);
                     curr.put("ip", curDevIp);
@@ -1469,7 +1483,7 @@ public class FileServerService extends Service {
                 try { cfn = URLDecoder.decode(cfn, "UTF-8"); } catch (Exception ignored) {}
             }
             cfn = cfn.replaceAll("[\\/:*?\"<>|]", "_");
-            File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File downloadsDir = getDownloadsDir();
             File partFile = new File(downloadsDir, cfn + ".airbeam.part");
             if (partFile.exists()) partFile.delete();
             cancelActiveTransfer();
@@ -1590,8 +1604,7 @@ public class FileServerService extends Service {
         }
 
         fileName = fileName.replaceAll("[\\/:*?\"<>|]", "_");
-        File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        if (!downloadsDir.exists()) downloadsDir.mkdirs();
+        File downloadsDir = getDownloadsDir();
 
         // CHUNKED UPLOAD PATH (from Web Portal Dropzone with Pause/Resume/Cancel)
         if (offset >= 0) {
@@ -1605,9 +1618,20 @@ public class FileServerService extends Service {
             activeTransferSpeedMBps = 0.0;
 
             try {
-                try (RandomAccessFile raf = new RandomAccessFile(partFile, "rw")) {
+                RandomAccessFile raf = null;
+                try {
+                    raf = new RandomAccessFile(partFile, "rw");
+                } catch (Throwable e) {
+                    File fallbackDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                    if (fallbackDir != null && !fallbackDir.exists()) fallbackDir.mkdirs();
+                    downloadsDir = fallbackDir != null ? fallbackDir : getFilesDir();
+                    partFile = new File(downloadsDir, fileName + ".airbeam.part");
+                    currentHttpUploadTargetFile = partFile;
+                    raf = new RandomAccessFile(partFile, "rw");
+                }
+                try {
                     if (offset == 0 && totalSize > 0) {
-                        raf.setLength(totalSize);
+                        try { raf.setLength(totalSize); } catch (Throwable ignored) {}
                     }
                     raf.seek(offset);
 
@@ -1645,7 +1669,11 @@ public class FileServerService extends Service {
                             bytesReadTotal += read;
                         }
                     }
-                } // raf is safely CLOSED before rename!
+                } finally {
+                    if (raf != null) {
+                        try { raf.close(); } catch (Throwable ignored) {}
+                    }
+                }
 
                 long curPos = offset + (contentLength > 0 ? contentLength : 0);
                 boolean isLast = uri.contains("last=1") || (totalSize > 0 && curPos >= totalSize);
@@ -1701,7 +1729,16 @@ public class FileServerService extends Service {
         }
 
         // MONOLITHIC UPLOAD PATH (from iOS Shortcut or single POST)
-        File targetFile = getUniqueFile(downloadsDir, fileName);
+        File targetFile = null;
+        try {
+            targetFile = getUniqueFile(downloadsDir, fileName);
+            if (!targetFile.getParentFile().canWrite()) throw new IOException("Cannot write to " + downloadsDir);
+        } catch (Throwable e) {
+            File fallbackDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (fallbackDir != null && !fallbackDir.exists()) fallbackDir.mkdirs();
+            downloadsDir = fallbackDir != null ? fallbackDir : getFilesDir();
+            targetFile = getUniqueFile(downloadsDir, fileName);
+        }
         long payloadExpected = contentLength > 0 ? (isMultipart ? Math.max(0, contentLength - multipartHeadersConsumed - tailLen) : contentLength) : -1;
         String transferId = UUID.randomUUID().toString();
         TransferItem item = new TransferItem(transferId, targetFile.getName(), payloadExpected > 0 ? payloadExpected : contentLength);
@@ -2071,6 +2108,40 @@ public class FileServerService extends Service {
             }
         } catch (Exception ignored) {}
         return getLocalIpAddress(context);
+    }
+
+    public File getDownloadsDir() {
+        try {
+            File pubDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            if (pubDownloads != null) {
+                if (!pubDownloads.exists()) pubDownloads.mkdirs();
+                File probe = new File(pubDownloads, ".airbeam_probe_" + System.currentTimeMillis());
+                if (probe.createNewFile()) {
+                    probe.delete();
+                    return pubDownloads;
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            File appDownloads = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (appDownloads != null) {
+                if (!appDownloads.exists()) appDownloads.mkdirs();
+                return appDownloads;
+            }
+        } catch (Throwable ignored) {}
+
+        File filesDir = getFilesDir();
+        if (filesDir != null && !filesDir.exists()) filesDir.mkdirs();
+        return filesDir;
+    }
+
+    public String getDiscoveredPcIp() {
+        return discoveredPcIp;
+    }
+
+    public void setDiscoveredPcIp(String ip) {
+        this.discoveredPcIp = ip;
     }
 
     @Override

@@ -1951,3 +1951,30 @@ x_tools_card.
    - **Production Release APK Rebuilt & Packaged**:
      * Built and signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,926,140` bytes).
+
+21. **Fix: PC-to-Android Receive Error, Direct Android-to-PC File Sending, Web Portal 404 Resolution, and Complete "Tablet" to "Android" Renaming**:
+   - **Fix 1: PC-to-Android File Receive Error & Scoped Storage Fallback (`FileServerService.java`, `AndroidManifest.xml`)**:
+     * **Root Cause**: Direct POSIX file writes to `Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)` threw `FileNotFoundException: EACCES (Permission denied)` on Android 10-14 Scoped Storage devices during the `MANIFEST` phase of `handleNioControlStream`. The uncaught exception abruptly closed the socket channel before sending `MANIFEST_OK`, causing PC to report `Receiver rejected manifest ()` or `Control connection failed`.
+     * **Resolution**:
+       1. Added `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />` and `android:requestLegacyExternalStorage="true"` to `AndroidManifest.xml`.
+       2. Implemented `getDownloadsDir()` in `FileServerService.java` that probes public Downloads and, if unwritable or restricted, safely falls back to `getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)` (which is 100% writable without permissions on all Android versions).
+       3. Wrapped `new RandomAccessFile` and `raf.setLength(filesize)` in `handleNioControlStream` with automatic fallback to `getExternalFilesDir` and caught pre-allocation errors gracefully.
+       4. Applied the same `getDownloadsDir()` fallback in `handleHttpUpload` for web portal / iOS uploads.
+       5. Ensured `MediaScannerConnection.scanFile` is called upon transfer completion so received files immediately show in device Downloads and Gallery.
+   - **Fix 2: Direct Android-to-PC File Sending Feature (`activity_main.xml`, `MainActivity.java`, `FileServerService.java`)**:
+     * Added prominent green `btnSendToPc` ("💻 Send Files to PC") button directly in `activity_main.xml`.
+     * Added `getDiscoveredPcIp()` and `setDiscoveredPcIp()` to `FileServerService.java` to track PC IP from incoming UDP beacons.
+     * Implemented `openFilePickerToSendToPc()` in `MainActivity.java` with `EXTRA_ALLOW_MULTIPLE` and persistable read permissions.
+     * Implemented target PC IP resolution: checks discovered PC IP, falls back to Wi-Fi/Hotspot gateway IP (e.g. `192.168.137.1`), and displays a clean confirmation dialog.
+     * Implemented `executeSendFilesToPcAsync()` in `MainActivity.java`: streams each file over HTTP POST to `http://<pc_ip>:8080/upload?filename=<url_encoded>&source=android` using 1MB chunked / fixed-length streaming with zero memory accumulation.
+     * Connected live progress updates to `cardActiveTransfer`, `pbActiveTransfer`, and status text, routing received files into `Received_From_Android` on the PC.
+   - **Fix 3: Web Portal Direct Navigation & 404 Resolution (`desktop-sender/sender.py`)**:
+     * **Root Cause**: Navigating directly or pasting `http://<ip>:8080/upload` or empty path root caused Python's `IPhonePortalHTTPHandler` to fall through to `send_error(404, "Not Found")`, displaying Python's raw 404 error page. Similarly, navigating to `/download` when staged files were cleared or indices were missing generated raw 404 errors.
+     * **Resolution**:
+       1. Updated `clean_path` checking in `do_GET` to handle empty path `""` and redirect `GET /upload` or `GET /upload/` directly to `/` (HTTP 302 Found).
+       2. Updated `/download` handling so that unavailable, missing, or out-of-bounds indices seamlessly redirect to `/` instead of returning a 404 error page.
+   - **Fix 4: Universal Renaming of "Tablet" to "Android" (`desktop-sender/sender.py`, `WebPortalHtml.java`, `FileServerService.java`, `MainActivity.java`, `activity_main.xml`)**:
+     * Renamed all occurrences of "Tablet" / "Samsung Tablet" / "Android Tablet" to "Android" / "Android Device" across desktop PC GUI (Option 1 "Android Hotspot", Option 2, Option 3, dialogs, toasts, status badges), Web Portal device switcher bar and device pills, and Android APK interface.
+   - **Production Release APK Rebuilt & Packaged**:
+     * Built and signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,930,841` bytes).
