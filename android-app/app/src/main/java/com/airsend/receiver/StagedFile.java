@@ -49,6 +49,20 @@ public class StagedFile {
         throw new IOException("No valid file or URI for staged file " + name);
     }
 
+    public long getActualSize(Context context) {
+        if (size > 0) return size;
+        if (file != null && file.exists()) return file.length();
+        if (uri != null && context != null) {
+            try (android.content.res.AssetFileDescriptor afd = context.getContentResolver().openAssetFileDescriptor(uri, "r")) {
+                if (afd != null) {
+                    long len = afd.getLength();
+                    if (len > 0) return len;
+                }
+            } catch (Exception ignored) {}
+        }
+        return size;
+    }
+
     public String getFormattedSize() {
         if (size <= 0) return "0 B";
         if (size < 1024) return size + " B";

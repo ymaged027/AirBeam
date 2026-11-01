@@ -674,6 +674,10 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     }
 
     public String getActivePortalUrl() {
+        return "http://airbeam.local:" + FileServerService.PORT + "/";
+    }
+
+    public String getDirectIpPortalUrl() {
         String ip = null;
         if (MODE_TABLET_HOTSPOT.equals(currentMode) || FileServerService.isHotspotActive(this)) {
             ip = FileServerService.getHotspotIpAddress(this);
@@ -681,9 +685,9 @@ public class MainActivity extends AppCompatActivity implements FileServerService
             ip = FileServerService.getLocalIpAddress(this);
         }
         if (ip != null && !ip.isEmpty() && !ip.equals("127.0.0.1") && !ip.startsWith("169.254.")) {
-            return "http://" + ip + ":" + FileServerService.PORT;
+            return "http://" + ip + ":" + FileServerService.PORT + "/";
         }
-        return "http://airbeam.local:" + FileServerService.PORT;
+        return getActivePortalUrl();
     }
 
     private void generatePortalQrCode() {
@@ -728,6 +732,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         try {
             startActivityForResult(intent, REQUEST_CODE_STAGE_FILES);
         } catch (Exception e) {
@@ -758,6 +763,14 @@ public class MainActivity extends AppCompatActivity implements FileServerService
 
     private boolean stageUri(Uri uri) {
         if (uri == null) return false;
+
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) {}
+        try {
+            grantUriPermission(getPackageName(), uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception ignored) {}
+
         String displayName = "file_" + System.currentTimeMillis();
         long fileSize = 0;
         String mime = getContentResolver().getType(uri);
@@ -775,6 +788,14 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                 }
             }
         } catch (Exception ignored) {}
+
+        if (fileSize <= 0) {
+            try (android.content.res.AssetFileDescriptor afd = getContentResolver().openAssetFileDescriptor(uri, "r")) {
+                if (afd != null && afd.getLength() > 0) {
+                    fileSize = afd.getLength();
+                }
+            } catch (Exception ignored) {}
+        }
 
         int index = FileServerService.getStagedFiles().size();
         StagedFile stagedFile = new StagedFile(index, displayName, fileSize, uri, mime);

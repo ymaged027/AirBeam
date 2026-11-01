@@ -1928,3 +1928,26 @@ x_tools_card.
    - **Production Release APK Rebuilt & Packaged**:
      * Built and signed release APK with Gradle 8.5 (`assembleRelease` in 18s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,924,948` bytes).
+
+20. **Fix: Tablet Web Portal Download Engine, Feature Parity with PC, and Universal mDNS QR Code**:
+   - **Fix 1: Android Tablet Web Portal Download Engine & RFC 5987 Formatting (`FileServerService.java`, `StagedFile.java`)**:
+     * **Root Cause**: The tablet's web portal download handler (`handleDownload`) only parsed indices using a rigid substring check on `id=` or path prefix `/download/`. If range requests or query strings were appended, or if files were requested by name, parsing failed. Furthermore, content URIs lacked persistable permission grants in background server threads, causing `SecurityException` when opening input streams, and `Content-Disposition` lacked RFC 5987 `filename*=UTF-8''` encoding required by iOS Safari.
+     * **Resolution**:
+       1. Enhanced `handleDownload` in `FileServerService.java` to support `/download/<index>`, `/download?id=<index>`, `/download?index=<index>`, and `/download?filename=<name>` with fallback matching.
+       2. Implemented `getActualSize(Context)` in `StagedFile.java` to resolve accurate sizes from `AssetFileDescriptor` if cursor queries return 0 or -1.
+       3. Added standard RFC 5987 `Content-Disposition: attachment; filename="<name>"; filename*=UTF-8''<url_encoded>` headers, `Accept-Ranges: bytes`, and full CORS headers.
+       4. Added safe range-skipping: if `skip(startByte)` yields fewer bytes on ContentProvider streams, the server reads and discards remaining bytes to ensure byte-perfect alignment for partial requests.
+       5. Optimized `handleDownloadAllZip` with `Deflater.NO_COMPRESSION` to stream uncompressed ZIP bundles instantly with zero tablet CPU latency.
+   - **Fix 2: Web Portal HTML Feature Parity with PC (`WebPortalHtml.java`)**:
+     * Added Screen WakeLock API (`acquireWakeLock()`, `releaseWakeLock()`, `updateWakeLockBadge()`) and live "⚡ Screen Awake" status badge in the header to prevent iPhones from sleeping and terminating transfers or downloads.
+     * Synchronized download buttons to dynamically compute targets: `${getTargetBaseUrl() ? (getTargetBaseUrl() + '/download?id=' + f.index) : ('/download/' + f.index)}` with `onclick="acquireWakeLock()"`.
+     * Updated `downloadAllFiles()` to initiate downloads via a temporary virtual `<a>` element with `.download` attribute and 60-second WakeLock hold, matching the PC portal implementation.
+   - **Fix 3: Android APK QR Code Universal Address & Persistable Permissions (`MainActivity.java`)**:
+     * **Universal Address**: Updated `getActivePortalUrl()` in `MainActivity.java` to return `http://airbeam.local:8080/`, ensuring the APK's QR code (`ivPortalQr`), URL label (`tvPortalUrl`), and copy button (`btnCopyPortalUrl`) redirect to the universal mDNS address identical to the PC version.
+     * Added `getDirectIpPortalUrl()` for fallback direct-IP resolution.
+     * **Persistable Permissions**: Added `Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION` to `openFilePickerToStage()` and called `getContentResolver().takePersistableUriPermission()` and `grantUriPermission()` in `stageUri()`, ensuring staged files remain accessible to `FileServerService` without permission denial.
+   - **Fix 4: Transfer Engine Responsiveness (`desktop-sender/sender.py`)**:
+     * In `HighSpeedTransferEngine.execute()`, set `ack_stop.set()` and reduced ACK listener timeout to 100ms when `self.cancel_event.is_set()`, eliminating 15-second worker join delays during cancellation.
+   - **Production Release APK Rebuilt & Packaged**:
+     * Built and signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,926,140` bytes).

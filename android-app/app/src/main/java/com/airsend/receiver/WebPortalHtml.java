@@ -269,7 +269,10 @@ public class WebPortalHtml {
 "    <div class=\"header\">\n" +
 "        <h1>⚡ AirBeam v6.0</h1>\n" +
 "        <p>Receiver: " + deviceModel + "</p>\n" +
-"        <div class=\"badge\">● DIRECT 5GHz WI-FI PIPE (50-95+ MB/s)</div>\n" +
+"        <div style=\"display:flex;justify-content:center;gap:6px;margin-top:6px;flex-wrap:wrap;\">\n" +
+"            <div class=\"badge\">● DIRECT 5GHz WI-FI PIPE (50-95+ MB/s)</div>\n" +
+"            <span id=\"wakeLockBadge\" style=\"display:none;background:rgba(16,185,129,0.2);color:#10B981;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;align-items:center;gap:4px;\">⚡ Screen Awake</span>\n" +
+"        </div>\n" +
 "    </div>\n" +
 "\n" +
 "    <!-- ⚡ AirBeam Multi-Device Switcher -->\n" +
@@ -475,24 +478,65 @@ public class WebPortalHtml {
 "            const btnAll = document.getElementById('btnDownloadAll');\n" +
 "            badge.innerText = `${stagedFiles.length} file${stagedFiles.length === 1 ? '' : 's'}`;\n" +
 "            if (stagedFiles.length === 0) {\n" +
-"                container.innerHTML = '<p style=\"color:var(--text-secondary);font-size:13px;text-align:center;margin:8px 0;\">No files staged on Android yet. Tap \"Send Files to iPhone\" in the Android app.</p>';\n" +
+"                container.innerHTML = '<p style=\"color:var(--text-secondary);font-size:13px;text-align:center;margin:8px 0;\">No files staged yet. Tap \"Send Files to iPhone\" in the Android app.</p>';\n" +
 "                btnAll.style.display = 'none';\n" +
 "                return;\n" +
 "            }\n" +
 "            btnAll.style.display = stagedFiles.length > 1 ? 'block' : 'none';\n" +
 "            let html = '';\n" +
 "            stagedFiles.forEach(f => {\n" +
+"                const thumbHtml = f.thumb_url\n" +
+"                    ? `<img src=\"${f.thumb_url}\" loading=\"lazy\" style=\"width:48px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.15);\" alt=\"thumb\" onerror=\"this.style.display='none'\">`\n" +
+"                    : '';\n" +
+"                const dlUrl = getTargetBaseUrl() ? (getTargetBaseUrl() + '/download?id=' + f.index) : ('/download/' + f.index);\n" +
 "                html += `\n" +
 "                    <div class=\"file-item\">\n" +
+"                        ${thumbHtml}\n" +
 "                        <div class=\"file-info\">\n" +
-"                            <div class=\"file-name\">${f.name}</div>\n" +
+"                            <div class=\"file-name\" title=\"${f.name}\">${f.name}</div>\n" +
 "                            <div class=\"file-size\">${f.formatted_size}</div>\n" +
 "                        </div>\n" +
-"                        <a href=\"${getTargetBaseUrl()}/download?id=${f.index}\" class=\"btn-download\" download=\"${f.name}\">⬇️ Download</a>\n" +
+"                        <a href=\"${dlUrl}\" class=\"btn-download\" download=\"${f.name}\" onclick=\"acquireWakeLock()\">⬇️ Download</a>\n" +
 "                    </div>\n" +
 "                `;\n" +
 "            });\n" +
 "            container.innerHTML = html;\n" +
+"        }\n" +
+"\n" +
+"        let wakeLockSentinel = null;\n" +
+"\n" +
+"        async function acquireWakeLock() {\n" +
+"            try {\n" +
+"                if ('wakeLock' in navigator) {\n" +
+"                    wakeLockSentinel = await navigator.wakeLock.request('screen');\n" +
+"                    updateWakeLockBadge(true);\n" +
+"                    wakeLockSentinel.addEventListener('release', () => {\n" +
+"                        wakeLockSentinel = null;\n" +
+"                        updateWakeLockBadge(false);\n" +
+"                    });\n" +
+"                }\n" +
+"            } catch (err) {\n" +
+"                console.log(\"Screen Wake Lock not acquired:\", err);\n" +
+"            }\n" +
+"        }\n" +
+"\n" +
+"        async function releaseWakeLock() {\n" +
+"            try {\n" +
+"                if (wakeLockSentinel) {\n" +
+"                    await wakeLockSentinel.release();\n" +
+"                    wakeLockSentinel = null;\n" +
+"                }\n" +
+"            } catch (err) {\n" +
+"                console.log(\"Screen Wake Lock release error:\", err);\n" +
+"            }\n" +
+"            updateWakeLockBadge(false);\n" +
+"        }\n" +
+"\n" +
+"        function updateWakeLockBadge(active) {\n" +
+"            const b = document.getElementById('wakeLockBadge');\n" +
+"            if (b) {\n" +
+"                b.style.display = active ? 'inline-flex' : 'none';\n" +
+"            }\n" +
 "        }\n" +
 "\n" +
 "        function copyUploadEndpoint() {\n" +
@@ -548,8 +592,17 @@ public class WebPortalHtml {
 "            } catch (e) { showToast('Copied!'); }\n" +
 "        }\n" +
 "\n" +
-"        function downloadAllFiles() {\n" +
-"            window.location.href = getTargetBaseUrl() + '/download-all.zip';\n" +
+"        async function downloadAllFiles() {\n" +
+"            if (stagedFiles.length === 0) return;\n" +
+"            await acquireWakeLock();\n" +
+"            const a = document.createElement('a');\n" +
+"            a.href = (getTargetBaseUrl() || '') + '/download-all.zip';\n" +
+"            a.download = `AirBeam_Staged_Files_${Date.now()}.zip`;\n" +
+"            document.body.appendChild(a);\n" +
+"            a.click();\n" +
+"            document.body.removeChild(a);\n" +
+"            showToast(\"⚡ Streaming uncompressed ZIP download started!\");\n" +
+"            setTimeout(releaseWakeLock, 60000);\n" +
 "        }\n" +
 "\n" +
 "        let currentUploadXhr = null;\n" +

@@ -4653,7 +4653,9 @@ class HighSpeedTransferEngine:
                                     file_bytes_sent[0] += bytes_read
 
                     # Wait for all stripe ACKs to be confirmed on disk
-                    ack_t.join(timeout=15.0)
+                    if self.cancel_event.is_set():
+                        ack_stop.set()
+                    ack_t.join(timeout=0.1 if self.cancel_event.is_set() else 15.0)
                     ack_stop.set()
                     try:
                         sock.close()

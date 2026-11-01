@@ -42,6 +42,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.zip.Deflater;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -61,6 +62,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.StandardSocketOptions;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ServerSocketChannel;
@@ -1259,15 +1261,27 @@ public class FileServerService extends Service {
     }
 
     private void handleDownload(String uri, Map<String, String> headers, OutputStream out) throws IOException {
-        int fileIndex = 0;
+        int fileIndex = -1;
         try {
             if (uri.contains("id=")) {
                 String idStr = uri.substring(uri.indexOf("id=") + 3);
                 int amp = idStr.indexOf('&');
                 if (amp != -1) idStr = idStr.substring(0, amp);
                 fileIndex = Integer.parseInt(idStr);
+            } else if (uri.contains("index=")) {
+                String idStr = uri.substring(uri.indexOf("index=") + 6);
+                int amp = idStr.indexOf('&');
+                if (amp != -1) idStr = idStr.substring(0, amp);
+                fileIndex = Integer.parseInt(idStr);
             } else if (uri.startsWith("/download/")) {
-                fileIndex = Integer.parseInt(uri.substring("/download/".length()));
+                String idStr = uri.substring("/download/".length());
+                int q = idStr.indexOf('?');
+                if (q != -1) idStr = idStr.substring(0, q);
+                int s = idStr.indexOf('/');
+                if (s != -1) idStr = idStr.substring(0, s);
+                if (!idStr.isEmpty()) {
+                    fileIndex = Integer.parseInt(idStr);
+                }
             }
         } catch (Exception ignored) {}
 
@@ -1275,6 +1289,25 @@ public class FileServerService extends Service {
         synchronized (stagedFiles) {
             if (fileIndex >= 0 && fileIndex < stagedFiles.size()) {
                 staged = stagedFiles.get(fileIndex);
+            } else if (uri.contains("filename=") || uri.contains("name=")) {
+                String qn = "";
+                if (uri.contains("filename=")) {
+                    qn = uri.substring(uri.indexOf("filename=") + 9);
+                } else if (uri.contains("name=")) {
+                    qn = uri.substring(uri.indexOf("name=") + 5);
+                }
+                int amp = qn.indexOf('&');
+                if (amp != -1) qn = qn.substring(0, amp);
+                try { qn = URLDecoder.decode(qn, "UTF-8"); } catch (Exception ignored) {}
+                for (StagedFile f : stagedFiles) {
+                    if (f.name.equalsIgnoreCase(qn)) {
+                        staged = f;
+                        break;
+                    }
+                }
+            }
+            if (staged == null && !stagedFiles.isEmpty() && fileIndex == -1) {
+                staged = stagedFiles.get(0);
             }
         }
 
@@ -1283,7 +1316,7 @@ public class FileServerService extends Service {
             return;
         }
 
-        long fileLength = staged.size;
+        long fileLength = staged.getActualSize(this);
         long startByte = 0;
         long endByte = fileLength > 0 ? fileLength - 1 : 0;
         boolean isPartial = false;
@@ -1294,9 +1327,13 @@ public class FileServerService extends Service {
             int dash = rangeVal.indexOf('-');
             if (dash != -1) {
                 try {
-                    startByte = Long.parseLong(rangeVal.substring(0, dash));
-                    if (dash < rangeVal.length() - 1) {
-                        endByte = Long.parseLong(rangeVal.substring(dash + 1));
+                    String sStr = rangeVal.substring(0, dash).trim();
+                    String eStr = (dash < rangeVal.length() - 1) ? rangeVal.substring(dash + 1).trim() : "";
+                    if (!sStr.isEmpty()) {
+                        startByte = Long.parseLong(sStr);
+                    }
+                    if (!eStr.isEmpty()) {
+                        endByte = Long.parseLong(eStr);
                     }
                     if (endByte >= fileLength) endByte = fileLength - 1;
                     if (startByte <= endByte) isPartial = true;
@@ -1304,13 +1341,30 @@ public class FileServerService extends Service {
             }
         }
 
-        try (InputStream fis = staged.openInputStream(this)) {
+        InputStream fis = null;
+        try {
+            fis = staged.openInputStream(this);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to open staged file: " + staged.name, e);
+            sendResponse(out, 500, "Internal Server Error", "text/plain", ("Failed opening file: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
+            return;
+        }
+
+        try {
             String safeName = staged.name.replace("\"", "_");
+            String encodedName;
+            try {
+                encodedName = URLEncoder.encode(staged.name, "UTF-8").replace("+", "%20");
+            } catch (Exception e) {
+                encodedName = safeName;
+            }
+
             long sendLen = fileLength > 0 ? (endByte - startByte + 1) : 0;
 
             String statusLine = isPartial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n";
             StringBuilder sbHeaders = new StringBuilder(statusLine);
-            sbHeaders.append("Content-Type: ").append(staged.mimeType).append("\r\n");
+            String mType = staged.mimeType != null && !staged.mimeType.isEmpty() ? staged.mimeType : "application/octet-stream";
+            sbHeaders.append("Content-Type: ").append(mType).append("\r\n");
             if (sendLen > 0) {
                 sbHeaders.append("Content-Length: ").append(sendLen).append("\r\n");
             }
@@ -1318,17 +1372,24 @@ public class FileServerService extends Service {
                 sbHeaders.append("Content-Range: bytes ").append(startByte).append("-").append(endByte).append("/").append(fileLength).append("\r\n");
             }
             sbHeaders.append("Accept-Ranges: bytes\r\n");
-            sbHeaders.append("Content-Disposition: attachment; filename=\"").append(safeName).append("\"\r\n");
+            sbHeaders.append("Content-Disposition: attachment; filename=\"").append(safeName).append("\"; filename*=UTF-8''").append(encodedName).append("\r\n");
             sbHeaders.append("Access-Control-Allow-Origin: *\r\n");
+            sbHeaders.append("Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
+            sbHeaders.append("Access-Control-Allow-Headers: *\r\n");
             sbHeaders.append("Connection: close\r\n\r\n");
             out.write(sbHeaders.toString().getBytes(StandardCharsets.UTF_8));
 
             if (startByte > 0) {
-                long skipped = fis.skip(startByte);
+                long skipped = 0;
+                try {
+                    skipped = fis.skip(startByte);
+                } catch (Exception ignored) {}
+                byte[] discard = new byte[8192];
                 while (skipped < startByte) {
-                    long s = fis.skip(startByte - skipped);
-                    if (s <= 0) break;
-                    skipped += s;
+                    long toRead = Math.min(discard.length, startByte - skipped);
+                    int r = fis.read(discard, 0, (int) toRead);
+                    if (r == -1) break;
+                    skipped += r;
                 }
             }
 
@@ -1342,6 +1403,8 @@ public class FileServerService extends Service {
             out.flush();
         } catch (Exception e) {
             Log.e(TAG, "Error streaming download: " + staged.name, e);
+        } finally {
+            try { fis.close(); } catch (Exception ignored) {}
         }
     }
 
@@ -1356,14 +1419,24 @@ public class FileServerService extends Service {
         }
 
         String zipName = "AirBeam_Files_" + System.currentTimeMillis() + ".zip";
+        String encodedZip;
+        try {
+            encodedZip = URLEncoder.encode(zipName, "UTF-8").replace("+", "%20");
+        } catch (Exception e) {
+            encodedZip = zipName;
+        }
         String headers = "HTTP/1.1 200 OK\r\n"
                 + "Content-Type: application/zip\r\n"
-                + "Content-Disposition: attachment; filename=\"" + zipName + "\"\r\n"
+                + "Content-Disposition: attachment; filename=\"" + zipName + "\"; filename*=UTF-8''" + encodedZip + "\r\n"
                 + "Access-Control-Allow-Origin: *\r\n"
+                + "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+                + "Access-Control-Allow-Headers: *\r\n"
                 + "Connection: close\r\n\r\n";
         out.write(headers.getBytes(StandardCharsets.UTF_8));
+        out.flush();
 
-        try (ZipOutputStream zos = new ZipOutputStream(out)) {
+        try (ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(out, 1048576))) {
+            zos.setLevel(Deflater.NO_COMPRESSION);
             byte[] buf = new byte[1048576];
             for (StagedFile sf : copy) {
                 try (InputStream is = sf.openInputStream(this)) {
