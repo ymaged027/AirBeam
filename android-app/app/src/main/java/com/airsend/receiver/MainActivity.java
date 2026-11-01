@@ -820,18 +820,18 @@ public class MainActivity extends AppCompatActivity implements FileServerService
     }
 
     @Override
+    public void onBackPressed() {
+        stopFileService();
+        finishAffinity();
+    }
+
+    @Override
     protected void onDestroy() {
         statusRefreshHandler.removeCallbacks(statusRefreshRunnable);
         try {
             unregisterReceiver(clipboardReceiver);
         } catch (Exception ignored) {}
-        if (isBound) {
-            if (fileServerService != null) {
-                fileServerService.setTransferListener(null);
-            }
-            unbindService(serviceConnection);
-            isBound = false;
-        }
+        stopFileService();
         super.onDestroy();
     }
 }

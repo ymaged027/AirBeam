@@ -84,6 +84,7 @@ public class FileServerService extends Service {
     public static final int UDP_PORT = 7778;
     private static final String CHANNEL_ID = "AirSendServiceChannel";
     private static final int NOTIF_ID = 1001;
+    public static final String ACTION_STOP_SERVICE = "com.airsend.receiver.ACTION_STOP";
 
     private final IBinder binder = new LocalBinder();
     private ServerSocket serverSocket;
@@ -298,6 +299,31 @@ public class FileServerService extends Service {
     }
 
     @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_STOP_SERVICE.equals(intent.getAction())) {
+            stopForeground(true);
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) {
+                manager.cancel(NOTIF_ID);
+            }
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        return START_NOT_STICKY;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        stopForeground(true);
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) {
+            manager.cancel(NOTIF_ID);
+        }
+        stopSelf();
+    }
+
+    @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
@@ -333,12 +359,20 @@ public class FileServerService extends Service {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
         );
 
+        Intent stopIntent = new Intent(this, FileServerService.class);
+        stopIntent.setAction(ACTION_STOP_SERVICE);
+        PendingIntent stopPendingIntent = PendingIntent.getService(
+                this, 1, stopIntent,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
+        );
+
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(content)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
                 .setContentIntent(pendingIntent)
-                .setOngoing(true)
+                .setOngoing(false)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Quit / Exit", stopPendingIntent)
                 .build();
     }
 
@@ -1970,6 +2004,13 @@ public class FileServerService extends Service {
     public void onDestroy() {
         isRunning = false;
         isConnectingHotspot.set(false);
+        try {
+            stopForeground(true);
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) {
+                manager.cancel(NOTIF_ID);
+            }
+        } catch (Exception ignored) {}
         try {
             if (serverSocket != null) serverSocket.close();
             if (nioServerChannel != null) nioServerChannel.close();

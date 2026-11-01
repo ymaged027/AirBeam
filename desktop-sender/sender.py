@@ -3337,10 +3337,28 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        elif clean_path.startswith('/download/'):
+        elif clean_path.startswith('/download/') or clean_path in ('/download', '/download/'):
             try:
-                idx_str = clean_path[len('/download/'):]
-                idx = int(idx_str)
+                idx = None
+                if clean_path.startswith('/download/'):
+                    part = clean_path[len('/download/'):].strip('/')
+                    if part.isdigit():
+                        idx = int(part)
+                if idx is None:
+                    param = query.get('id', query.get('index', [None]))[0]
+                    if param is not None and param.isdigit():
+                        idx = int(param)
+                if idx is None:
+                    fn = query.get('filename', query.get('name', [None]))[0]
+                    if fn:
+                        selected = getattr(self.app, "selected_files", [])
+                        for i, fp in enumerate(selected):
+                            if os.path.basename(fp) == fn:
+                                idx = i
+                                break
+                if idx is None:
+                    self.send_error(400, "Missing or invalid file index")
+                    return
                 selected = getattr(self.app, "selected_files", [])
                 if idx < 0 or idx >= len(selected):
                     self.send_error(404, "File index out of range")

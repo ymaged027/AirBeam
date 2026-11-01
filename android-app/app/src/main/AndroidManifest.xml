@@ -53,6 +53,7 @@
             android:name=".FileServerService"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="true"
             android:foregroundServiceType="dataSync" />
 
         <provider
