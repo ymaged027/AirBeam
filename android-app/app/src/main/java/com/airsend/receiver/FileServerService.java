@@ -263,7 +263,7 @@ public class FileServerService extends Service {
     public static class ActiveTransferSession {
         public final long transferId;
         public final File partFile;
-        public final File targetFile;
+        public File targetFile;
         public final RandomAccessFile raf;
         public final FileChannel fileChannel;
         public final long totalBytes;
@@ -395,13 +395,21 @@ public class FileServerService extends Service {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     udpSocket.receive(packet);
                     String msg = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8).trim();
-                    if (msg.startsWith("AIRBEAM_DISCOVER")) {
-                        discoveredPcIp = packet.getAddress().getHostAddress();
-                        String model = Build.MANUFACTURER + " " + Build.MODEL;
-                        String replyMsg = "AIRBEAM_ACK|" + model + "|" + NIO_PORT;
-                        byte[] replyBytes = replyMsg.getBytes(StandardCharsets.UTF_8);
-                        DatagramPacket reply = new DatagramPacket(replyBytes, replyBytes.length, packet.getAddress(), packet.getPort());
-                        udpSocket.send(reply);
+                    if (msg.startsWith("AIRBEAM_DISCOVER") || msg.startsWith("AIRBEAM_PC_PING") || msg.startsWith("AIRBEAM_PC_PONG") || msg.startsWith("AIRBEAM_PC_ACK")) {
+                        String senderHost = packet.getAddress().getHostAddress();
+                        if (senderHost != null && !senderHost.startsWith("127.")) {
+                            discoveredPcIp = senderHost;
+                            try {
+                                getSharedPreferences("airbeam_prefs", MODE_PRIVATE).edit().putString("last_pc_ip", senderHost).apply();
+                            } catch (Exception ignored) {}
+                        }
+                        if (msg.startsWith("AIRBEAM_DISCOVER") || msg.startsWith("AIRBEAM_PC_PING")) {
+                            String model = Build.MANUFACTURER + " " + Build.MODEL;
+                            String replyMsg = "AIRBEAM_ACK|" + model + "|" + NIO_PORT;
+                            byte[] replyBytes = replyMsg.getBytes(StandardCharsets.UTF_8);
+                            DatagramPacket reply = new DatagramPacket(replyBytes, replyBytes.length, packet.getAddress(), packet.getPort());
+                            udpSocket.send(reply);
+                        }
                     } else if (msg.startsWith("AIRBEAM_HOTSPOT_HANDOVER|")) {
                         String[] parts = msg.split("\\|");
                         if (parts.length >= 4) {
@@ -410,13 +418,16 @@ public class FileServerService extends Service {
                             String hostIp = parts[3].trim();
                             String band = parts.length >= 5 ? parts[4].trim() : "5GHz";
                             String senderIp = packet.getAddress().getHostAddress();
+                            if (senderIp != null && !senderIp.startsWith("127.")) {
+                                discoveredPcIp = senderIp;
+                            }
                             if (!"LAPTOP_HOTSPOT".equalsIgnoreCase(connectionMode)) {
-                                Log.d(TAG, "Ignoring PC hotspot handover because current tablet mode is: " + connectionMode);
-                                return;
+                                Log.d(TAG, "Ignoring PC hotspot handover because current Android mode is: " + connectionMode);
+                                continue;
                             }
                             if (!isConnectingHotspot.compareAndSet(false, true)) {
                                 Log.d(TAG, "Ignoring duplicate Hotspot handover packet while connection is in progress");
-                                return;
+                                continue;
                             }
                             Log.d(TAG, "Received Hotspot handover request: " + ssid + " (Band: " + band + ") -> " + hostIp + " from sender: " + senderIp);
                             connectToUnsavedWindowsHotspot(ssid, passphrase, hostIp, band, senderIp);
@@ -725,6 +736,16 @@ public class FileServerService extends Service {
 
     private void handleNioClient(SocketChannel channel) {
         try {
+            try {
+                java.net.SocketAddress rem = channel.getRemoteAddress();
+                if (rem instanceof InetSocketAddress) {
+                    String remIp = ((InetSocketAddress) rem).getAddress().getHostAddress();
+                    if (remIp != null && !remIp.startsWith("127.")) {
+                        discoveredPcIp = remIp;
+                        getSharedPreferences("airbeam_prefs", MODE_PRIVATE).edit().putString("last_pc_ip", remIp).apply();
+                    }
+                }
+            } catch (Exception ignored) {}
             ByteBuffer magicBuf = ByteBuffer.allocate(4);
             readFully(channel, magicBuf);
             magicBuf.flip();
@@ -752,6 +773,10 @@ public class FileServerService extends Service {
     }
 
     private void handleNioControlStream(SocketChannel channel) throws Exception {
+        isTransferCancelled.set(false);
+        isTransferPaused.set(false);
+        long currentControlTransferId = -1;
+        try {
         while (isRunning && channel.isOpen()) {
             if (isTransferCancelled.get()) break;
             synchronized (transferPauseLock) {
@@ -815,6 +840,9 @@ public class FileServerService extends Service {
                 }
                 FileChannel fc = raf.getChannel();
 
+                isTransferCancelled.set(false);
+                isTransferPaused.set(false);
+                currentControlTransferId = transferId;
                 TransferItem item = new TransferItem(String.valueOf(transferId), targetFile.getName(), filesize);
                 ActiveTransferSession session = new ActiveTransferSession(transferId, partFile, targetFile, raf, fc, filesize, item);
                 activeSessions.put(transferId, session);
@@ -830,6 +858,7 @@ public class FileServerService extends Service {
                 writeFully(channel, resp);
             } else if ("FINALIZE".equalsIgnoreCase(action)) {
                 long transferId = json.getLong("transfer_id");
+                currentControlTransferId = -1;
                 ActiveTransferSession session = activeSessions.remove(transferId);
                 if (session != null) {
                     try {
@@ -845,6 +874,7 @@ public class FileServerService extends Service {
                         }
                         boolean renamed = session.partFile.renameTo(session.targetFile);
                         if (!renamed) {
+                            boolean copied = false;
                             try (InputStream in = new java.io.FileInputStream(session.partFile);
                                  OutputStream out = new FileOutputStream(session.targetFile)) {
                                 byte[] copyBuf = new byte[1024 * 1024];
@@ -852,10 +882,22 @@ public class FileServerService extends Service {
                                 while ((r = in.read(copyBuf)) != -1) {
                                     out.write(copyBuf, 0, r);
                                 }
+                                copied = true;
                             } catch (Exception e) {
-                                Log.e(TAG, "Fallback copy failed", e);
+                                Log.e(TAG, "Fallback copy failed, moving to app external Downloads", e);
                             }
-                            session.partFile.delete();
+                            if (copied) {
+                                session.partFile.delete();
+                            } else {
+                                File safeDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                                if (safeDir != null && !safeDir.exists()) safeDir.mkdirs();
+                                File safeTarget = getUniqueFile(safeDir != null ? safeDir : session.partFile.getParentFile(), session.targetFile.getName());
+                                if (session.partFile.renameTo(safeTarget)) {
+                                    session.targetFile = safeTarget;
+                                } else {
+                                    session.targetFile = session.partFile;
+                                }
+                            }
                         }
                     }
 
@@ -878,6 +920,7 @@ public class FileServerService extends Service {
                 break;
             } else if ("CANCEL".equalsIgnoreCase(action)) {
                 long transferId = json.getLong("transfer_id");
+                currentControlTransferId = -1;
                 ActiveTransferSession session = activeSessions.remove(transferId);
                 if (session != null) {
                     try {
@@ -904,6 +947,26 @@ public class FileServerService extends Service {
                 handleIncomingClipboard(text);
                 ByteBuffer resp = ByteBuffer.wrap("CLIPBOARD_OK\n".getBytes(StandardCharsets.US_ASCII));
                 writeFully(channel, resp);
+            }
+        }
+        } finally {
+            if (currentControlTransferId != -1) {
+                ActiveTransferSession stale = activeSessions.remove(currentControlTransferId);
+                if (stale != null) {
+                    try {
+                        stale.fileChannel.close();
+                        stale.raf.close();
+                    } catch (Exception ignored) {}
+                    if (stale.partFile != null && stale.partFile.exists()) {
+                        stale.partFile.delete();
+                    }
+                    stale.transferItem.setStatus(TransferItem.Status.FAILED);
+                    if (transferListener != null) {
+                        transferListener.onTransferFailed(stale.transferItem, "Connection interrupted before finalize");
+                    }
+                    updateNotification("AirBeam V2", "Transfer interrupted");
+                }
+                releaseWakeAndWifiLocks();
             }
         }
     }
@@ -1606,6 +1669,11 @@ public class FileServerService extends Service {
         fileName = fileName.replaceAll("[\\/:*?\"<>|]", "_");
         File downloadsDir = getDownloadsDir();
 
+        if (offset <= 0) {
+            isTransferCancelled.set(false);
+            isTransferPaused.set(false);
+        }
+
         // CHUNKED UPLOAD PATH (from Web Portal Dropzone with Pause/Resume/Cancel)
         if (offset >= 0) {
             File partFile = new File(downloadsDir, fileName + ".airbeam.part");
@@ -1683,7 +1751,7 @@ public class FileServerService extends Service {
                     if (targetFile.exists()) targetFile.delete();
                     boolean renamed = partFile.renameTo(targetFile);
                     if (!renamed) {
-                        // Fallback byte copy if rename fails on scoped storage
+                        boolean copied = false;
                         try (InputStream cpIn = new FileInputStream(partFile);
                              OutputStream cpOut = new FileOutputStream(targetFile)) {
                             byte[] cpBuf = new byte[1048576];
@@ -1691,10 +1759,22 @@ public class FileServerService extends Service {
                             while ((cpRead = cpIn.read(cpBuf)) != -1) {
                                 cpOut.write(cpBuf, 0, cpRead);
                             }
+                            copied = true;
                         } catch (Exception cpEx) {
                             Log.e(TAG, "Fallback copy error", cpEx);
                         }
-                        partFile.delete();
+                        if (copied) {
+                            partFile.delete();
+                        } else {
+                            File safeDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                            if (safeDir != null && !safeDir.exists()) safeDir.mkdirs();
+                            File safeTarget = getUniqueFile(safeDir != null ? safeDir : partFile.getParentFile(), targetFile.getName());
+                            if (partFile.renameTo(safeTarget)) {
+                                targetFile = safeTarget;
+                            } else {
+                                targetFile = partFile;
+                            }
+                        }
                     }
 
                     MediaScannerConnection.scanFile(this, new String[]{targetFile.getAbsolutePath()}, null, (pathScan, uriScan) -> {
@@ -1717,6 +1797,8 @@ public class FileServerService extends Service {
                 Log.e(TAG, "Error in chunked upload", e);
                 if (isTransferCancelled.get()) {
                     if (partFile.exists()) partFile.delete();
+                    isTransferCancelled.set(false);
+                    isTransferPaused.set(false);
                 }
                 sendResponse(out, 500, "Internal Server Error", "text/plain", e.getMessage().getBytes(StandardCharsets.UTF_8));
             } finally {

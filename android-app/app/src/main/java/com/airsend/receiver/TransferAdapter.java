@@ -138,9 +138,12 @@ public class TransferAdapter extends RecyclerView.Adapter<TransferAdapter.ViewHo
     }
 
     private String getMimeType(String path) {
-        String ext = android.webkit.MimeTypeMap.getFileExtensionFromUrl(path);
-        if (ext != null) {
-            String type = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.toLowerCase(Locale.ROOT));
+        if (path == null) return "*/*";
+        int dot = path.lastIndexOf('.');
+        if (dot >= 0 && dot < path.length() - 1) {
+            String ext = path.substring(dot + 1).toLowerCase(Locale.ROOT);
+            if ("apk".equals(ext)) return "application/vnd.android.package-archive";
+            String type = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
             if (type != null) return type;
         }
         return "*/*";

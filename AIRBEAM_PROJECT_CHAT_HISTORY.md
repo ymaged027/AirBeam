@@ -1978,3 +1978,41 @@ x_tools_card.
    - **Production Release APK Rebuilt & Packaged**:
      * Built and signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
      * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk` (`4,930,841` bytes).
+
+
+22. **Deep Codebase Bug Audit & Comprehensive Stability Fixes (PC Sender, Android APK, & Web Portal)**:
+   - **Bug 1: PC-to-Android Multi-Stream Stripe ACK Timeout (`Worker 1: only received 1/2 stripe ACKs`) (`desktop-sender/sender.py`)**:
+     * **Root Cause (Confirmed via `last_transfer_stats.json`)**: `HighSpeedTransferEngine` configured `SO_SNDBUF = 16 MB` per worker socket and pushed all assigned 16 MB stripes back-to-back without backpressure. On Windows, the kernel TCP send buffer absorbed up to 96 MB into RAM in 0.2s (`peak_speed_mb_s: 318.77`), causing the worker thread to exit its send loop immediately and hit `ack_t.join(timeout=15.0)` while 64 MB of buffered data was still draining over a 4.43 MB/s Wi-Fi link. After 15 seconds, `ack_t.join` timed out, closed the socket prematurely, and raised `Worker 1: only received 1/2 stripe ACKs`.
+     * **Resolution**:
+       1. Implemented per-worker sliding-window stripe backpressure (`while (stripe_seq - acks_received[0]) >= 1`) so at most 1 unacknowledged stripe is in flight per worker socket at a time, eliminating OS buffer bloat and making live speed/progress reporting accurate.
+       2. Extended final stripe ACK drain timeout from `15.0s` to `120.0s` and ensured pause time is excluded from timeout checks.
+       3. Added automatic `CANCEL` control message dispatch if a worker error occurs so the receiver immediately cleans up `.airbeam.part` files.
+   - **Bug 2: Sticky `isTransferCancelled` Flag & Premature `.part` Deletion (`FileServerService.java`)**:
+     * **Root Cause**: `cancelActiveTransfer()` set `isTransferCancelled.set(true)` and never reset it to `false` for NIO multi-stream transfers or chunked HTTP uploads, causing every subsequent transfer after a cancel to immediately abort at the first loop iteration (`if (isTransferCancelled.get()) break;`). Additionally, if `FINALIZE` fallback copy failed on restricted public `Downloads`, `session.partFile.delete()` ran unconditionally inside `finally`, destroying the received file.
+     * **Resolution**:
+       1. Explicitly reset `isTransferCancelled.set(false)` and `isTransferPaused.set(false)` at the start of `handleNioControlStream`, inside `MANIFEST`, and at the start/cleanup of `handleHttpUpload`.
+       2. Added `finally` cleanup in `handleNioControlStream` tracking `currentControlTransferId` so dropped control connections automatically close `fileChannel`/`raf`, delete `.airbeam.part`, and release `WakeLock`/`WifiLock`.
+       3. Protected `FINALIZE` and `handleHttpUpload` fallback copies so `.part` files are only deleted after `copiedOk == true`, with automatic fallback to app-specific `getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)`.
+   - **Bug 3: Missing JS Functions Halting Auto-Refresh on Android Web Portal (`WebPortalHtml.java`)**:
+     * **Root Cause**: `WebPortalHtml.java` invoked `checkServerTransferStatus()`, `toggleServerTransfer()`, and `cancelServerTransfer()` on page load and inside `setInterval`, but those functions were never defined in `WebPortalHtml.java`. This threw `Uncaught ReferenceError: checkServerTransferStatus is not defined` on line 457, halting script execution before `setInterval` auto-refresh loops (`fetchFiles`, `fetchClipboard`, `checkServerTransferStatus`) could be registered.
+     * **Resolution**: Defined `checkServerTransferStatus()`, `toggleServerTransfer()`, and `cancelServerTransfer()` in `WebPortalHtml.java`, prepended `(getTargetBaseUrl() || '')` to thumbnail URLs (`f.thumb_url`), and updated device switcher checks to accept both `'android'` and `'tablet'`.
+   - **Bug 4: Premature `return;` Killing UDP Discovery Listener & Wrong Gateway Fallback on Home Wi-Fi (`FileServerService.java`, `MainActivity.java`)**:
+     * **Root Cause**:
+       1. In `FileServerService.startUdpBeaconListener()`, receiving an `AIRBEAM_HOTSPOT_HANDOVER` packet while not in `LAPTOP_HOTSPOT` mode executed `return;` instead of `continue;`, permanently terminating the UDP listener `while` loop thread.
+       2. `discoveredPcIp` was only populated from `AIRBEAM_DISCOVER` packets, ignoring `AIRBEAM_PC_PING`, `AIRBEAM_PC_PONG`, and incoming NIO connections on port 7777.
+       3. In `MainActivity.handleSendFilesToPc()`, when `discoveredPcIp` was null on Home Wi-Fi, it fell back to the Wi-Fi gateway IP (`192.168.1.1`, the home router!) instead of the PC.
+     * **Resolution**:
+       1. Changed `return;` to `continue;` in `startUdpBeaconListener()`.
+       2. Recorded `discoveredPcIp` (and persisted `last_pc_ip` in `SharedPreferences`) from `AIRBEAM_DISCOVER`, `AIRBEAM_PC_PING`, `AIRBEAM_PC_PONG`, `AIRBEAM_PC_ACK`, `AIRBEAM_HOTSPOT_HANDOVER`, and incoming TCP NIO connections on port 7777.
+       3. Updated `handleSendFilesToPc()` to only use the gateway IP (`192.168.137.1`) when Android is on the Windows Hotspot subnet (`192.168.137.x`), otherwise falling back to persisted `last_pc_ip` or `airbeam.local`.
+       4. Guarded `MainActivity.onDestroy()` with `if (isFinishing() && !isChangingConfigurations())` and added `android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"` in `AndroidManifest.xml` so screen rotation or opening the file picker never kills `FileServerService`.
+   - **Bug 5: `FileProvider` Crash on Fallback Storage Paths & Filename MIME Parsing (`file_paths.xml`, `TransferAdapter.java`, `AndroidManifest.xml`)**:
+     * **Root Cause**:
+       1. `file_paths.xml` only declared `<external-path name="external_files" path="." />`, which throws `IllegalArgumentException: Failed to find configured root` when opening or sharing files saved in `getExternalFilesDir()` or internal storage fallback.
+       2. `TransferAdapter.getMimeType()` used `MimeTypeMap.getFileExtensionFromUrl(path)`, which returns `""` whenever a filename contains spaces or parentheses (e.g. `0871_04_FHD (2).mp4`), causing Android to open videos/images as generic `*/*` binary files.
+     * **Resolution**:
+       1. Added `<external-files-path>`, `<files-path>`, and `<cache-path>` to `file_paths.xml` and `<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />` to `AndroidManifest.xml`.
+       2. Updated `TransferAdapter.getMimeType()` to extract file extensions via `lastIndexOf('.')` and explicitly mapped `.apk` to `application/vnd.android.package-archive`.
+   - **Production Release APK Rebuilt & Packaged**:
+     * Built and signed release APK with Gradle 8.5 (`assembleRelease` in 14s).
+     * Updated `release/AirBeam-v6.0-Receiver.apk` and `release/AirBeam-Receiver.apk`.

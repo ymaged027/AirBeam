@@ -763,18 +763,17 @@ public class MainActivity extends AppCompatActivity implements FileServerService
             pcIp = fileServerService.getDiscoveredPcIp();
         }
         if (pcIp == null || pcIp.isEmpty() || pcIp.startsWith("127.")) {
-            try {
-                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
-                if (wm != null) {
-                    DhcpInfo dhcp = wm.getDhcpInfo();
-                    if (dhcp != null && dhcp.gateway != 0) {
-                        int g = dhcp.gateway;
-                        pcIp = String.format(Locale.US, "%d.%d.%d.%d", (g & 0xFF), ((g >> 8) & 0xFF), ((g >> 16) & 0xFF), ((g >> 24) & 0xFF));
-                    }
+            String localIp = FileServerService.getLocalIpAddress(this);
+            if (localIp != null && localIp.startsWith("192.168.137.")) {
+                pcIp = "192.168.137.1";
+            } else {
+                String savedPcIp = getSharedPreferences("airbeam_prefs", MODE_PRIVATE).getString("last_pc_ip", null);
+                if (savedPcIp != null && !savedPcIp.isEmpty() && !savedPcIp.startsWith("127.")) {
+                    pcIp = savedPcIp;
                 }
-            } catch (Exception ignored) {}
+            }
         }
-        final String defaultIp = (pcIp != null && !pcIp.equals("0.0.0.0")) ? pcIp : "192.168.137.1";
+        final String defaultIp = (pcIp != null && !pcIp.equals("0.0.0.0")) ? pcIp : "airbeam.local";
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("💻 Send " + uris.size() + " File(s) to PC");
@@ -823,6 +822,14 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                     }
                 } catch (Exception ignored) {}
 
+                if (fileSize <= 0) {
+                    try (android.content.res.AssetFileDescriptor afd = getContentResolver().openAssetFileDescriptor(uri, "r")) {
+                        if (afd != null && afd.getLength() > 0) {
+                            fileSize = afd.getLength();
+                        }
+                    } catch (Exception ignored) {}
+                }
+
                 final String currentName = displayName;
                 final int currentIdx = i + 1;
                 final long totalBytes = fileSize;
@@ -846,6 +853,7 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                     conn.setRequestProperty("User-Agent", "AirBeam-Android/" + Build.MODEL);
 
                     if (fileSize > 0) {
+                        conn.setRequestProperty("x-file-total", String.valueOf(fileSize));
                         conn.setFixedLengthStreamingMode(fileSize);
                     } else {
                         conn.setChunkedStreamingMode(1048576);
@@ -856,17 +864,31 @@ public class MainActivity extends AppCompatActivity implements FileServerService
                         if (in == null) throw new IOException("Cannot open input stream for: " + uri);
                         byte[] buf = new byte[1048576];
                         long totalRead = 0;
+                        long lastSpeedTime = System.currentTimeMillis();
+                        long lastSpeedBytes = 0;
                         int read;
                         while ((read = in.read(buf)) != -1) {
                             out.write(buf, 0, read);
                             totalRead += read;
                             final long done = totalRead;
+                            long now = System.currentTimeMillis();
+                            long dt = now - lastSpeedTime;
+                            double spdMB = -1.0;
+                            if (dt >= 250) {
+                                spdMB = ((double) (done - lastSpeedBytes) / (1024.0 * 1024.0)) / (dt / 1000.0);
+                                lastSpeedTime = now;
+                                lastSpeedBytes = done;
+                            }
+                            final double curSpd = spdMB;
                             if (totalBytes > 0) {
                                 int pct = (int) ((done * 100) / totalBytes);
                                 runOnUiThread(() -> {
                                     if (pbActiveTransfer != null) pbActiveTransfer.setProgress(pct);
                                     if (tvActivePercent != null) tvActivePercent.setText(pct + "%");
                                     if (tvActiveProgressDetail != null) tvActiveProgressDetail.setText(formatSize(done) + " / " + formatSize(totalBytes));
+                                    if (curSpd >= 0 && tvActiveSpeed != null) {
+                                        tvActiveSpeed.setText(String.format(Locale.US, "⚡ %.1f MB/s", curSpd));
+                                    }
                                 });
                             }
                         }
@@ -1041,7 +1063,17 @@ public class MainActivity extends AppCompatActivity implements FileServerService
         try {
             unregisterReceiver(clipboardReceiver);
         } catch (Exception ignored) {}
-        stopFileService();
+        if (isFinishing() && !isChangingConfigurations()) {
+            stopFileService();
+        } else if (isBound) {
+            try {
+                if (fileServerService != null) {
+                    fileServerService.setTransferListener(null);
+                }
+                unbindService(serviceConnection);
+            } catch (Exception ignored) {}
+            isBound = false;
+        }
         super.onDestroy();
     }
 }

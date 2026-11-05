@@ -399,7 +399,7 @@ public class WebPortalHtml {
 "            if (detectedDevices.current && (detectedDevices.current.type === 'tablet' || detectedDevices.current.type === 'android') && currentTargetDevice === 'pc') {\n" +
 "                return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);\n" +
 "            }\n" +
-"            if (detectedDevices.current && detectedDevices.current.type === 'pc' && currentTargetDevice === 'tablet') {\n" +
+"            if (detectedDevices.current && detectedDevices.current.type === 'pc' && (currentTargetDevice === 'tablet' || currentTargetDevice === 'android')) {\n" +
 "                return 'http://' + detectedDevices.peer.ip + ':' + (detectedDevices.peer.port || 8080);\n" +
 "            }\n" +
 "            return '';\n" +
@@ -418,7 +418,7 @@ public class WebPortalHtml {
 "                    document.getElementById('pillTabletLabel').innerText = tabletName;\n" +
 "                    document.getElementById('pillPCLabel').innerText = pcName;\n" +
 "                    const saved = localStorage.getItem('airbeam_target_device');\n" +
-"                    if (saved === 'pc' || saved === 'tablet') {\n" +
+"                    if (saved === 'pc' || saved === 'tablet' || saved === 'android') {\n" +
 "                        switchTargetDevice(saved, false);\n" +
 "                    }\n" +
 "                }\n" +
@@ -800,6 +800,60 @@ public class WebPortalHtml {
 "                document.getElementById('fileInput').value = '';\n" +
 "            }\n" +
 "        }\n" +
+"        async function checkServerTransferStatus() {\n" +
+"            try {\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/transfer/status');\n" +
+"                if (!res.ok) return;\n" +
+"                const data = await res.json();\n" +
+"                const card = document.getElementById('liveTransferCard');\n" +
+"                if (!card) return;\n" +
+"                if (data.active) {\n" +
+"                    card.style.display = 'block';\n" +
+"                    document.getElementById('liveTransferFilename').innerText = data.filename || 'Active Transfer';\n" +
+"                    document.getElementById('liveTransferPercent').innerText = (data.percent || 0) + '%';\n" +
+"                    document.getElementById('liveTransferFill').style.width = (data.percent || 0) + '%';\n" +
+"                    const mbDone = ((data.transferred || 0) / (1024 * 1024)).toFixed(1);\n" +
+"                    const mbTotal = ((data.total || 0) / (1024 * 1024)).toFixed(1);\n" +
+"                    document.getElementById('liveTransferBytes').innerText = mbDone + ' MB / ' + mbTotal + ' MB';\n" +
+"                    const speed = (data.speed_mbps || 0).toFixed(1);\n" +
+"                    const btnStop = document.getElementById('btnLiveTransferStop');\n" +
+"                    if (data.is_paused) {\n" +
+"                        document.getElementById('liveTransferSpeed').innerText = '⏹️ Stopped';\n" +
+"                        if (btnStop) { btnStop.innerText = '▶️ Resume'; btnStop.style.background = '#10B981'; }\n" +
+"                    } else {\n" +
+"                        document.getElementById('liveTransferSpeed').innerText = '⚡ ' + speed + ' MB/s';\n" +
+"                        if (btnStop) { btnStop.innerText = '⏹️ Stop'; btnStop.style.background = '#F59E0B'; }\n" +
+"                    }\n" +
+"                } else {\n" +
+"                    card.style.display = 'none';\n" +
+"                }\n" +
+"            } catch (e) {}\n" +
+"        }\n" +
+"\n" +
+"        async function toggleServerTransfer() {\n" +
+"            try {\n" +
+"                const res = await fetch(getTargetBaseUrl() + '/api/transfer/toggle_pause', { method: 'POST' });\n" +
+"                const data = await res.json();\n" +
+"                const btn = document.getElementById('btnLiveTransferStop');\n" +
+"                if (data.is_paused) {\n" +
+"                    if (btn) { btn.innerText = '▶️ Resume'; btn.style.background = '#10B981'; }\n" +
+"                    showToast('⏹️ Transfer stopped');\n" +
+"                } else {\n" +
+"                    if (btn) { btn.innerText = '⏹️ Stop'; btn.style.background = '#F59E0B'; }\n" +
+"                    showToast('▶️ Transfer resumed');\n" +
+"                }\n" +
+"            } catch (e) {}\n" +
+"        }\n" +
+"\n" +
+"        async function cancelServerTransfer() {\n" +
+"            try {\n" +
+"                await fetch(getTargetBaseUrl() + '/api/transfer/cancel', { method: 'POST' });\n" +
+"                const card = document.getElementById('liveTransferCard');\n" +
+"                if (card) card.style.display = 'none';\n" +
+"                showToast('❌ Transfer cancelled');\n" +
+"            } catch (e) {}\n" +
+"        }\n" +
+"\n" +
 "        loadDevices();\n" +
 "        fetchFiles();\n" +
 "        fetchClipboard();\n" +

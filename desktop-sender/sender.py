@@ -3537,10 +3537,16 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(resp)
                 return
-            # Extract filename from query parameter, X-Filename header, or Content-Disposition
+            # Extract filename from query parameter, X-Filename / X-File-Name header, or Content-Disposition
             raw_filename = query.get('filename', [''])[0]
             if not raw_filename:
-                raw_filename = self.headers.get('X-Filename') or self.headers.get('x-filename') or ''
+                raw_filename = (
+                    self.headers.get('X-Filename')
+                    or self.headers.get('x-filename')
+                    or self.headers.get('X-File-Name')
+                    or self.headers.get('x-file-name')
+                    or ''
+                )
             if not raw_filename:
                 cd = self.headers.get('Content-Disposition') or self.headers.get('content-disposition') or ''
                 m = re.search(r'filename\*?=(?:UTF-8'')?"?([^;\r\n"]+)"?', cd, re.IGNORECASE)
@@ -3641,7 +3647,9 @@ class IPhonePortalHTTPHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-            offset_param = query.get('offset', ['-1'])[0]
+            offset_param = query.get('offset', [None])[0]
+            if offset_param is None:
+                offset_param = self.headers.get('x-file-offset') or self.headers.get('X-File-Offset') or '-1'
             try:
                 offset_val = int(offset_param)
             except Exception:
@@ -4637,11 +4645,25 @@ class HighSpeedTransferEngine:
                     ack_t = threading.Thread(target=ack_reader, daemon=True)
                     ack_t.start()
 
-                    # Continuous pipelined stream: stream all assigned stripes back-to-back
+                    # Pipelined stream with sliding-window backpressure (at most 1 unacknowledged stripe in flight per worker)
+                    # Prevents 16MB OS socket buffer bloat from causing premature ACK timeout on slower Wi-Fi links
                     with open(file_path, "rb") as f_obj:
                         buf = bytearray(CHUNK_SLICE_BYTES)
                         view = memoryview(buf)
-                        for chunk_idx, chunk_off, chunk_len in assigned_chunks:
+                        for stripe_seq, (chunk_idx, chunk_off, chunk_len) in enumerate(assigned_chunks):
+                            if self.cancel_event.is_set() or worker_error[0] or ack_error[0]:
+                                break
+
+                            # Sliding window backpressure: wait until previous stripe (if more than 1 ahead) is ACKed
+                            wait_start = time.time()
+                            while (stripe_seq - acks_received[0]) >= 1 and not self.cancel_event.is_set() and not worker_error[0] and not ack_error[0]:
+                                if not self.pause_event.is_set():
+                                    wait_start = time.time()
+                                elif (time.time() - wait_start) > 120.0:
+                                    ack_error[0] = f"Worker {worker_id}: stripe ACK timed out"
+                                    break
+                                time.sleep(0.005)
+
                             if self.cancel_event.is_set() or worker_error[0] or ack_error[0]:
                                 break
 
@@ -4664,10 +4686,10 @@ class HighSpeedTransferEngine:
                                 with transfer_lock:
                                     file_bytes_sent[0] += bytes_read
 
-                    # Wait for all stripe ACKs to be confirmed on disk
+                    # Wait for all stripe ACKs to be confirmed on disk (up to 120s for final stripe drain)
                     if self.cancel_event.is_set():
                         ack_stop.set()
-                    ack_t.join(timeout=0.1 if self.cancel_event.is_set() else 15.0)
+                    ack_t.join(timeout=0.1 if self.cancel_event.is_set() else 120.0)
                     ack_stop.set()
                     try:
                         sock.close()
@@ -4699,6 +4721,12 @@ class HighSpeedTransferEngine:
 
             if worker_error[0]:
                 errors.append(f"{filename}: {worker_error[0]}")
+                try:
+                    cancel_payload = json.dumps({"action": "CANCEL", "transfer_id": transfer_id}).encode("utf-8")
+                    ctrl_cancel = struct.pack("!I", len(cancel_payload)) + cancel_payload
+                    ctrl_sock.sendall(ctrl_cancel)
+                except Exception:
+                    pass
                 ctrl_sock.close()
                 continue
 
@@ -5772,7 +5800,7 @@ class AirBeamSenderApp(BaseTkApp):
                 pass
 
             if is_airbeam and (band == "2.4 GHz" or is_low_rate):
-                self.lbl_telemetry_tip.config(text="⚠️ Tip: Switch tablet hotspot band to 5 GHz for 3x–5x faster speeds")
+                self.lbl_telemetry_tip.config(text="⚠️ Tip: Switch Android hotspot band to 5 GHz for 3x–5x faster speeds")
             else:
                 self.lbl_telemetry_tip.config(text="")
 
@@ -6140,7 +6168,7 @@ class AirBeamSenderApp(BaseTkApp):
         home_name = get_best_home_wifi_profile(self) or "Home Wi-Fi"
         ttk.Label(
             opt3_card,
-            text=f"Instant transfer! Both your PC and phone/tablet stay connected to your home Wi-Fi ('{home_name}'). No hotspot toggling or disconnecting.",
+            text=f"Instant transfer! Both your PC and phone/Android stay connected to your home Wi-Fi ('{home_name}'). No hotspot toggling or disconnecting.",
             style="CardBody.TLabel"
         ).pack(anchor="w", pady=(2, 8))
 
@@ -6155,7 +6183,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         opt1_top = tk.Frame(opt1_card, bg="#1e293b")
         opt1_top.pack(fill="x", pady=(0, 8))
-        ttk.Label(opt1_top, text="Option 2: 📡 Windows 5 GHz Mobile Hotspot (PC Hotspot ➔ Phone / Tablet)", style="CardHeader.TLabel").pack(side="left")
+        ttk.Label(opt1_top, text="Option 2: 📡 Windows 5 GHz Mobile Hotspot (PC Hotspot ➔ Phone / Android)", style="CardHeader.TLabel").pack(side="left")
 
         # Dual Switch Bar: 1. Standard Windows Hotspot | 2. Offline Hotspot (Loopback Method)
         sw1_frame = tk.Frame(opt1_card, bg="#1e293b")
@@ -6361,7 +6389,7 @@ class AirBeamSenderApp(BaseTkApp):
 
         ttk.Label(
             android_app_card,
-            text="Optional: If your Android tablet or phone has the AirBeam Receiver APK installed, you can beam directly to the app socket with multi-stream acceleration.",
+            text="Optional: If your Android device has the AirBeam Receiver APK installed, you can beam directly to the app socket with multi-stream acceleration.",
             style="CardBody.TLabel"
         ).pack(anchor="w", pady=(0, 6))
 
@@ -6752,7 +6780,7 @@ class AirBeamSenderApp(BaseTkApp):
 
     def on_tablet_hotspot_ready(self, model, ip):
         self.hotspot_state = "CONNECTED"
-        self.current_handover_band = "5GHz (Tablet)"
+        self.current_handover_band = "5GHz (Android)"
         self.entry_ip.delete(0, tk.END)
         self.entry_ip.insert(0, ip)
         self.lbl_device_status.config(
@@ -9084,7 +9112,7 @@ class AirBeamSenderApp(BaseTkApp):
 
                     elif text.startswith("AIRBEAM_ACK"):
                         parts = text.split("|")
-                        model = parts[1] if len(parts) > 1 else "Android Tablet"
+                        model = parts[1] if len(parts) > 1 else "Android Device"
                         tablet_ip = addr[0]
 
                         if tablet_ip.startswith("192.168.43."):
@@ -9097,7 +9125,7 @@ class AirBeamSenderApp(BaseTkApp):
 
                     elif text.startswith("AIRBEAM_HOTSPOT_READY"):
                         parts = text.split("|")
-                        model = parts[1] if len(parts) > 1 else "Android Tablet"
+                        model = parts[1] if len(parts) > 1 else "Android Device"
                         tablet_ip = addr[0]
                         if tablet_ip.startswith("192.168.43."):
                             self.after(0, lambda m=model, ip=tablet_ip: self.on_tablet_hotspot_ready(m, ip))
@@ -9107,7 +9135,7 @@ class AirBeamSenderApp(BaseTkApp):
                     elif text.startswith("AIRBEAM_NEED_24GHZ"):
                         if self.connection_mode.get() == "LAPTOP_HOTSPOT":
                             parts = text.split("|")
-                            model = parts[1] if len(parts) > 1 else "Android Tablet"
+                            model = parts[1] if len(parts) > 1 else "Android Device"
                             print(f"Received AIRBEAM_NEED_24GHZ from {model} ({addr[0]}). Switching hotspot to 2.4 GHz...")
                             self.after(0, self.switch_to_24ghz_hotspot)
 
@@ -9167,7 +9195,7 @@ class AirBeamSenderApp(BaseTkApp):
                 self.entry_ip.insert(0, "10.150.131.50")
             if self.hotspot_state != "CONNECTED":
                 self.lbl_device_status.config(
-                    text=f"📱 Found {model} on router. To use 5 GHz Hotspot: Turn ON Hotspot on tablet & connect PC Wi-Fi to it.",
+                    text=f"📱 Found {model} on router. To use 5 GHz Hotspot: Turn ON Hotspot on Android & connect PC Wi-Fi to it.",
                     style="StatusPending.TLabel"
                 )
 
@@ -9181,7 +9209,7 @@ class AirBeamSenderApp(BaseTkApp):
             return
         self.hotspot_state = "SWITCHING_24GHZ"
         self.lbl_device_status.config(
-            text="Switched to 2.4 GHz direct hotspot (5 GHz not visible on tablet). Connecting...",
+            text="Switched to 2.4 GHz direct hotspot (5 GHz not visible on Android). Connecting...",
             style="StatusPending.TLabel"
         )
         self.negotiate_hotspot_bypass(preferred_band="2.4GHz")
@@ -9226,9 +9254,9 @@ class AirBeamSenderApp(BaseTkApp):
                 self.hotspot_state = "WAITING_5GHZ" if preferred_band == "5GHz" else "WAITING_24GHZ"
 
                 status_msg = (
-                    f"Hotspot active ({ssid}). Sending 5 GHz handover to tablet..."
+                    f"Hotspot active ({ssid}). Sending 5 GHz handover to Android..."
                     if preferred_band == "5GHz"
-                    else "Switched to 2.4 GHz direct hotspot (5 GHz not visible on tablet). Connecting..."
+                    else "Switched to 2.4 GHz direct hotspot (5 GHz not visible on Android). Connecting..."
                 )
                 self.after(0, lambda m=status_msg: self.lbl_device_status.config(
                     text=m, style="StatusHotspot.TLabel"
@@ -9365,9 +9393,9 @@ class AirBeamSenderApp(BaseTkApp):
             if mode == "TABLET_HOTSPOT" or is_on_airbeam:
                 self.after(0, lambda: messagebox.showerror(
                     "Android Hotspot Not Reachable",
-                    f"Could not connect to tablet at {target or '192.168.43.1'}.\n\n"
+                    f"Could not connect to Android at {target or '192.168.43.1'}.\n\n"
                     "Please check:\n"
-                    "1. Is Mobile Hotspot turned ON on your Samsung tablet (5 GHz preferred)?\n"
+                    "1. Is Mobile Hotspot turned ON on your Android device (5 GHz preferred)?\n"
                     "2. Is your PC Wi-Fi connected to 'airbeam'?\n"
                     "3. Is the AirBeam Receiver app open on your Android screen?"
                 ))
@@ -9380,16 +9408,16 @@ class AirBeamSenderApp(BaseTkApp):
                 else:
                     self.after(0, lambda: messagebox.showerror(
                         "Device Not Found",
-                        f"Could not reach {target}:7777 and no tablet responded on Laptop Hotspot.\n\n"
-                        "1. Ensure AirBeam Receiver is opened on your tablet screen.\n"
-                        "2. In the tablet app, ensure 'Laptop AP' mode is selected."
+                        f"Could not reach {target}:7777 and no Android device responded on Laptop Hotspot.\n\n"
+                        "1. Ensure AirBeam Receiver is opened on your Android screen.\n"
+                        "2. In the Android app, ensure 'Laptop AP' mode is selected."
                     ))
             else:
                 self.after(0, lambda: messagebox.showerror(
                     "Device Not Found",
                     f"Could not reach {target}:7777 on your home Wi-Fi network.\n\n"
-                    "1. Ensure both PC and tablet are connected to the same Wi-Fi router.\n"
-                    "2. Check the IP shown on your tablet's AirBeam screen and enter it manually."
+                    "1. Ensure both PC and Android are connected to the same Wi-Fi router.\n"
+                    "2. Check the IP shown on your Android's AirBeam screen and enter it manually."
                 ))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -9485,9 +9513,9 @@ class AirBeamSenderApp(BaseTkApp):
                     messagebox.showerror(
                         "Cannot Connect",
                         f"Cannot connect to {target}:7777.\n\n"
-                        "1. Make sure AirBeam Receiver is OPEN on your tablet screen.\n"
-                        "2. Ensure PC and tablet are connected to the same Wi-Fi or tablet hotspot.\n"
-                        "3. Check the IP shown on your tablet's AirBeam screen."
+                        "1. Make sure AirBeam Receiver is OPEN on your Android screen.\n"
+                        "2. Ensure PC and Android are connected to the same Wi-Fi or Android hotspot.\n"
+                        "3. Check the IP shown on your Android's AirBeam screen."
                     )
                 ))
                 self.is_sending = False
